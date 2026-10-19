@@ -35,8 +35,13 @@ python scripts/finalize.py source/IMG_1234.jpg render.png \
   --project grandma --out-dir grandma/output --suffix _upscale
 ```
 
-Order is fixed: encode, copy, correct, verify. It exits non-zero and renames the
-file `*_UNVERIFIED` if any metadata could not be preserved.
+Order is fixed: encode, copy, correct, verify. Exit codes are part of the contract:
+
+| Code | Meaning |
+| --- | --- |
+| 0 | Verified, or `degraded` with the shortfall named |
+| 1 | Verification failed — file renamed `*_UNVERIFIED`, do not deliver |
+| 2 | Bad invocation or environment — nothing was written |
 
 ## Project layout
 
@@ -126,6 +131,16 @@ python scripts/finalize.py source/IMG_1234.jpg render.png --grain reconstructed
 
 `--grain reconstructed` puts the fact into the provenance sentence automatically,
 so a reconstruction cannot be delivered as if it were preservation.
+
+## Tests
+
+```sh
+python -m pytest tests/ -q
+```
+
+The tests pin the invariants rather than the prose: naming never overwrites, the
+provenance sentence cannot be talked out of disclosing a reconstructed grain, and
+the original file is byte-identical after a run.
 
 ## Quick QA
 

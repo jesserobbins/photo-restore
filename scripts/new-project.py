@@ -51,7 +51,7 @@ Restoration project scaffolded {date} by photo-upscale-enhance.
 2. Restore, writing the raw render somewhere temporary.
 3. Finalize it:
 
-    python scripts/finalize.py source/IMG_1234.jpg render.png \\\\
+    python scripts/finalize.py source/IMG_1234.jpg render.png \\
       --project . --suffix _upscale
 
 4. Check the fidelity checklist, then deliver.
@@ -79,16 +79,31 @@ def build_parser():
     return p
 
 
-def copy_in(files, dest, project):
+def merge_list(old, new):
+    out = list(old or [])
+    for item in new:
+        if item not in out:
+            out.append(item)
+    return out
+
+
+def copy_in(files, dest, project, rename=None, role="file"):
+    """Copy files in without ever clobbering something already there."""
     placed = []
     for f in files:
         if not f.exists():
             raise SystemExit(f"Not found: {f}")
-        target = dest / f.name
-        if target.exists() and target.resolve() == f.resolve():
-            placed.append(str(target))
-            continue
-        shutil.copy2(f, target)
+        name = f"{f.stem}{rename}{f.suffix}" if rename else f.name
+        target = dest / name
+        if target.exists() and target.resolve() != f.resolve():
+            # source/ is read-only evidence. Replacing a file there would silently
+            # swap the thing being restored, which is the worst possible outcome.
+            raise SystemExit(
+                f"{target.relative_to(project)} already exists. Rename the incoming "
+                f"{role} or use a different project; refusing to overwrite evidence."
+            )
+        if not target.exists():
+            shutil.copy2(f, target)
         placed.append(str(target.relative_to(project)))
     return placed
 
@@ -103,29 +118,43 @@ def main():
         # a life of its own -- usually a sign that the path is wrong.
         raise SystemExit(
             f"{root} already exists and is not empty. Pass --force if that is "
-            "really the project directory."
+            "really the project directory. --force merges into the existing "
+            "manifest rather than replacing it."
         )
 
     for sub in SUBDIRS:
         (root / sub).mkdir(parents=True, exist_ok=True)
 
-    placed_source = copy_in(a.source, root / "source", root)
-    placed_master = copy_in(a.master, root / "source", root)
-    placed_face = copy_in(a.face, root / "refs" / "face", root)
-    placed_body = copy_in(a.body, root / "refs" / "body", root)
+    placed_source = copy_in(a.source, root / "source", root, role="source")
+    # Masters are renamed on the way in, so a master can never land on top of the
+    # restoration source it exists to be compared against.
+    placed_master = copy_in(a.master, root / "source", root, rename="_master", role="master")
+    placed_face = copy_in(a.face, root / "refs" / "face", root, role="face reference")
+    placed_body = copy_in(a.body, root / "refs" / "body", root, role="body reference")
 
     manifest_path = root / "manifest.json"
+    previous = {}
+    if manifest_path.exists():
+        # Re-scaffolding must never erase the verification history finalize.py
+        # appended. Merge, keeping assets and the original created stamp.
+        with manifest_path.open() as fh:
+            previous = json.load(fh)
+
     data = {
         "schema": SCHEMA,
         "name": name,
-        "created": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "created": previous.get("created") or datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "tool": "photo-upscale-enhance 2.0",
-        "sources": placed_source,
-        "masters": placed_master,
-        "references": {"face": placed_face, "body": placed_body},
-        "assets": [],
+        "sources": merge_list(previous.get("sources"), placed_source),
+        "masters": merge_list(previous.get("masters"), placed_master),
+        "references": {
+            "face": merge_list((previous.get("references") or {}).get("face"), placed_face),
+            "body": merge_list((previous.get("references") or {}).get("body"), placed_body),
+        },
+        "assets": previous.get("assets", []),
         "notes": [
             "source/ is read-only evidence; nothing writes to it.",
+            "Masters are copied as <stem>_master.<ext> so they cannot collide with a source.",
             "Refs constrain identity and proportion only -- never expression, "
             "gaze, apparent age, or clothing.",
             "finalize.py appends one entry per asset, including the metadata "

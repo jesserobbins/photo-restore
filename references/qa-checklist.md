@@ -30,6 +30,9 @@ mask the affected area, or revert to a deterministic baseline.
       duplicated details, or oversharpening.
 - [ ] No false sharpness from invented eye reflections, teeth, eyelashes,
       hair strands, or background text.
+- [ ] No crushed shadows, clipped highlights, artificial HDR, or extreme saturation.
+- [ ] Reasonable pixel dimension increase (typically 2x width and height).
+- [ ] Original file retained; outputs labeled if multiple variants are generated.
 
 ## Grain checks
 
@@ -43,8 +46,8 @@ Grain is the one texture this skill may add, and only under disclosure.
       grain twice as large in pixels and identical in structure.
 - [ ] Texture is not uniform and identical everywhere, which would mean the
       upscaler substituted synthetic texture.
-- [ ] Crunchy noise is at edges rather than in flat areas, which would mean
-      grain was sharpened rather than preserved.
+- [ ] No crunchy noise concentrated at edges (that is sharpened grain, not
+      preserved grain).
 - [ ] On a print scan, paper surface texture and film grain were not confused
       or amplified together.
 - [ ] Retouched areas of a studio portrait were not given grain back.
@@ -53,10 +56,6 @@ Grain is the one texture this skill may add, and only under disclosure.
       chroma pass.
 - [ ] If grain was synthesized, it was explicitly requested, is disclosed in the
       delivery, and is recorded by `finalize.py --grain reconstructed`.
-- [ ] No crushed shadows, clipped highlights, artificial HDR, or extreme saturation.
-- [ ] Reasonable pixel dimension increase (typically 2x width and height).
-- [ ] Original file retained; outputs labeled if multiple variants are generated.
-- [ ] Reasonable pixel dimension increase (typically 2x width and height).
 
 ## Metadata checks (hard)
 

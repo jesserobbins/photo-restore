@@ -56,8 +56,10 @@ Notes:
 
 - Do **not** pass `--skip-edited`. For a photo the owner has already adjusted,
   the edited render is the version they have seen and approved, and it is the
-  one to restore. `--master` in `finalize.py` exists only for someone doing
-  archival work on the unedited original.
+  one to restore. For archival work on the unedited original instead, export the
+  master file as well and pass it to `new-project.py --master`, which copies it
+  in as `<stem>_master.<ext>` beside the source. `finalize.py` has no `--master`
+  option: you choose which file is SOURCE by which path you pass.
 - `--sidecar xmp` keeps a machine-readable record beside the file, useful when
   the container cannot hold everything.
 - `--export-aae` keeps the non-destructive edit recipe. If the result is later
@@ -141,7 +143,7 @@ Without it:
 ## Checklist
 
 - [ ] Preflighted the delivered file; it is the original, not a render
-- [ ] `source/` holds the edited render for an adjusted photo (or `--master` used deliberately)
+- [ ] `source/` holds the edited render for an adjusted photo (or the master copied in with `--master` used deliberately)
 - [ ] `finalize.py` reported `pass`
 - [ ] Imported into a named album with `--skip-dups`
 - [ ] Confirmed the new asset carries the capture date

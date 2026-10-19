@@ -1,6 +1,16 @@
-# Photo Upscale & Enhance — Fidelity First
+# photo-restore
 
-A reusable Agent Skills-compatible photo restoration workflow focused on **subject fidelity** rather than generative prettification.
+## Motivation
+
+The state of the art in AI enabled photo restoration continues to evolve rapidly
+while the goals and objectives remain the same. This skill provides simple and
+repeatable photo restoration instructions for your AI platform.
+
+## What it does
+
+A reusable Agent Skills-compatible photo restoration workflow focused on **subject
+fidelity** rather than generative prettification, and on keeping the photograph's
+record intact rather than only its pixels.
 
 - `SKILL.md`: skill metadata, non-negotiable fidelity constraints, restoration workflow, and validation rules.
 - `references/prompt-templates.md`: prompts for normal images, same-person face references, archival scans, and group portraits.

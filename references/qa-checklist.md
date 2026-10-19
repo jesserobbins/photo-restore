@@ -33,6 +33,30 @@ mask the affected area, or revert to a deterministic baseline.
 - [ ] No crushed shadows, clipped highlights, artificial HDR, or extreme saturation.
 - [ ] Reasonable pixel dimension increase (typically 2x width and height).
 - [ ] Original file retained; outputs labeled if multiple variants are generated.
+- [ ] Reasonable pixel dimension increase (typically 2x width and height).
+
+## Metadata checks (hard)
+
+A clean image that lost its history is a failed restoration, so these are not
+soft checks.
+
+- [ ] `DateTimeOriginal` is byte-identical to the source. The capture date never
+      moves, not even to record the processing time.
+- [ ] Camera, lens, GPS, rating, title, and keywords from the source are present.
+- [ ] ICC profile carried.
+- [ ] `Orientation` is `1`. An inherited 6 or 8 rotates an already-upright image.
+- [ ] `ExifImageWidth` / `ExifImageHeight` match the real output pixels, not the
+      source's. Half-copied metadata that states the old size is worse than none.
+- [ ] Existing caption is still present as a substring; the provenance sentence
+      was appended, not substituted.
+- [ ] No source keyword was dropped.
+- [ ] Provenance records when and where: the sentence in `UserComment`, the
+      structured event in `XMP-xmpMM:History`.
+- [ ] Re-running the finalize step does not stack the provenance sentence twice.
+- [ ] `scripts/finalize.py` reported `pass`. A `fail` means do not deliver and do
+      not import into Photos.
+- [ ] A `degraded` result was reported to the owner, naming what was lost rather
+      than claiming preservation.
 
 ## Procedure
 

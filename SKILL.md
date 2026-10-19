@@ -8,7 +8,7 @@ description: >
   deblurring, and face-reference-guided restoration. Prefer faithful recovery
   over creative reconstruction or beautification.
 metadata:
-  version: "1.0.0"
+  version: "2.0.0"
   default-mode: "conservative"
 ---
 
@@ -81,22 +81,70 @@ If the user does not specify otherwise, use:
 | Face treatment | Same fidelity rules as the rest of the photo |
 | Generative reconstruction | **Off**, unless truly needed and disclosed |
 | Reference face use | Identity consistency only |
-| Output | Lossless PNG or high-quality original-appropriate format; retain original |
+| Output format | **Same container as the source** (JPEG→JPEG q95, PNG→PNG, TIFF→TIFF, HEIC→JPEG) |
+| Output filename | `<source-stem>_upscale.<ext>`; `_enhance` for the higher-detail variant |
+| Overwrite | **Never**; collisions append `-2`, `-3` |
+| Metadata | **Copy from source, correct what changed, append provenance** |
+| Capture date | **Never modified**, not even to record the processing time |
+| Original | Retained, unwritten, unmodified |
 
 **Conservative** is not an adjective for a prompt; it is the acceptance
 criterion. If a more dramatic image looks better but changes a subject,
 reject it and use the gentler result.
+
+Metadata is part of fidelity. A restoration that returns clean pixels and no
+capture date, camera, place, or caption destroyed the archive to improve the
+image. See [references/metadata-and-naming.md](references/metadata-and-naming.md).
+
+## Project directories
+
+For a job with face or body references, or more than one photo, keep the work in
+a project directory. `scripts/new-project.py` scaffolds it; a human can also
+make one by hand.
+
+```
+<project>/
+  source/      the photo(s) to restore — read-only, never written to
+  refs/face/   identity constraints: bone structure, hairline, marks
+  refs/body/   silhouette and proportion constraints
+  output/      suffixed results, metadata intact
+  qa/          compare.py sheets
+  manifest.json
+```
+
+```sh
+python scripts/new-project.py grandma --source target.jpg \
+  --face face-ref.jpg --body body-ref.jpg
+```
+
+Face and body references are separated by directory because their roles are not
+interchangeable: face references constrain *who*, body references constrain
+*shape*, and neither constrains expression, gaze, apparent age, or clothing.
+Putting them in differently named directories makes that limit structural rather
+than something to remember.
+
+A project is optional. For one photo with no references, pass plain paths to
+`finalize.py` and skip the scaffold.
 
 ## Workflow
 
 ### 1. Inspect and anchor the source
 
 - Treat the original image as authoritative evidence. Do not overwrite it.
+- If the photo arrived by drag-and-drop rather than as a path, it is a **visual
+  reference of unknown provenance**, not the original — a chat client may have
+  re-encoded it at reduced size with metadata stripped. On macOS, preflight it
+  and recover the real file from Photos.app by UUID. See
+  [references/macos-photos.md](references/macos-photos.md).
 - Note dimensions, orientation, grain, focus, compression artifacts, scratches,
   color cast, clipping, and areas of genuine uncertainty.
+- Read the existing metadata before touching anything. The capture date, camera,
+  place, caption, and keywords are what the owner will expect back.
 - Identify all faces, expressions, body outlines, hands, distinctive objects,
   text, patterns, and small features at risk of "helpful" invention.
-- Preserve subject count and exact framing. Handle EXIF orientation correctly.
+- Preserve subject count and exact framing. Handle EXIF orientation correctly;
+  most upscalers return pixels already upright, so the output orientation tag
+  must be normalized rather than inherited.
 - If the subject is very small or badly damaged, be explicit that some features
   cannot be faithfully recovered.
 
@@ -154,7 +202,6 @@ If no image-processing capability is available, provide the user the
 precise prompt and workflow rather than claim that editing occurred.
 
 ### 5. Verify fidelity before delivering
-
 Follow [references/qa-checklist.md](references/qa-checklist.md). At minimum:
 
 - Compare original and output at matched framing and magnification.
@@ -172,17 +219,58 @@ Follow [references/qa-checklist.md](references/qa-checklist.md). At minimum:
 
 No aggregate image-similarity metric can substitute for these checks.
 
-### 6. Deliver transparently
+### 6. Finalize the file: name it and carry the metadata
+
+Visual fidelity is not the only thing to verify. Run
+`scripts/finalize.py SOURCE RENDER` to write a correctly named output whose
+metadata is copied from the source, corrected where the upscale made it false,
+and verified against the real pixels.
+
+```sh
+python scripts/finalize.py source/IMG_1234.jpg render.png \
+  --project grandma --out-dir grandma/output --suffix _upscale
+```
+
+It performs, in this order: normalize and encode to the source container, copy
+all metadata, correct the falsified tags, add a provenance sentence, then verify
+and report. Then it appends a manifest entry.
+
+What it guarantees, and what to do if it does not:
+
+| Reported | Meaning | Action |
+| --- | --- | --- |
+| `pass` | All metadata carried and dimensions consistent. | Deliver. |
+| `degraded` | exiftool absent; only the raw EXIF blob and ICC profile carried. | Say exactly which fields are missing, including that provenance was not written. Do not claim preservation. |
+| `fail` | A core tag is missing, a dimension tag disagrees, or a caption was replaced. | **Do not deliver and do not import into Photos.** Fix and rerun. |
+
+The output keeps the source's capture date, camera, GPS, rating, keywords and
+caption, and gains a provenance line recording **when** and **where** the
+upscale happened. The capture date is never moved — the processing time goes in
+`XMP-xmpMM:History` and `UserComment` precisely so that a 1962 photograph does
+not get refiled as a 2026 one.
+
+If `exiftool` is unavailable and the host has no filesystem at all, do not
+assert that metadata was preserved. Give the user the exact commands from
+[references/metadata-and-naming.md](references/metadata-and-naming.md) and say
+they were not run here.
+
+### 7. Deliver transparently
 
 - Return the restored image where the available tools support it.
 - Say the scale applied and summarize **actual** operations performed.
+- Report the metadata result: `pass`, or the specific `degraded` shortfall.
+- Say which file was restored when a photo had edits: the edited render or the
+  unedited master are different claims about the same filename.
 - Clearly distinguish a non-generative upscale from a generated/restored
   interpretation; do not promise exact recovery of lost detail.
 - If significant areas are ambiguous, disclose them briefly.
 - Preserve the original and avoid silent crop/colorization/content changes.
 - For low-quality source material, optionally provide two labeled variants:
-  **Faithful** (minimal change) and **Enhanced** (more detail but subject to
-  the same identity/expression constraints). Default to **Faithful** alone.
+  **Faithful** (`_upscale`) and **Enhanced** (`_enhance`, more detail but subject
+  to the same identity/expression constraints). Default to **Faithful** alone.
+- On macOS, the result can be imported back into Photos as a new asset with its
+  capture date intact. See [references/macos-photos.md](references/macos-photos.md),
+  and never run `osxphotos push-exif`, which writes to the originals.
 
 ## Priority decision rules
 
@@ -196,6 +284,9 @@ No aggregate image-similarity metric can substitute for these checks.
 | Damage prevents confident recovery | Leave restrained ambiguity; disclose |
 | Uncertain writing or insignia | Do not invent readable text |
 | Only face changes while rest stays faithful | Reject or mask off face |
+| Output has clean pixels but lost the capture date | Treat as a failure, not a success |
+| The delivered file looks like a chat-app re-encode | Get the original before restoring |
+| A caption would be replaced by the provenance note | Append instead; never replace |
 
 ## Default prompt
 

@@ -88,9 +88,19 @@ files, which is the one thing this skill must not do.
 
 ## Use in an Agent Skills-compatible environment
 
-Place the `photo-upscale-enhance` folder under the agent's supported skill directory (for example a Codex project's `.agents/skills/` directory), then invoke it by name or describe the task. Keep the folder name identical to the frontmatter `name`.
+Place the `photo-restore` folder under the agent's supported skill directory (for example a Codex project's `.agents/skills/` directory), then invoke it by name or describe the task. Keep the folder name identical to the frontmatter `name`.
 
 For a ChatGPT Project where direct skill installation is not supported, paste the content of `SKILL.md` into the Project's instructions/knowledge, or upload the package as project reference material. This zip by itself does **not** silently install the skill in the current chat.
+
+## Preferred image models
+
+The pixel work goes to an image model, and they do not behave the same way on a
+restoration. The image models reachable through **Gemini** and **Codex** have held
+up best; prefer them where a choice exists, and use their image-*editing* path
+with the source passed in rather than a text-to-image prompt that describes it.
+Any other editing-capable model is acceptable under the same constraints and the
+same verification — the models execute, the fidelity rules and checks are what
+make the result a restoration.
 
 ## Tool-agnostic, not capability-agnostic
 

@@ -1,10 +1,14 @@
 ---
-name: photo-upscale-enhance
+name: photo-restore
 description: >
-  Conservatively upscale, restore, and enhance photographs while preserving
-  the exact identity, facial features, expression, gaze, pose, body shape,
-  clothing, composition, and historical details of every subject. Use for
-  photo upscaling, old-photo restoration, scanned prints, noise reduction,
+  Fidelity-first restoration of photographs as archival objects, not just
+  pixels. Conservatively upscale, restore, and enhance while preserving the
+  exact identity, facial features, expression, gaze, pose, body shape,
+  clothing, composition, and historical details of every subject. Also carries
+  the source metadata forward (capture date, camera, GPS, caption, keywords),
+  names outputs from the source filename, records provenance, keeps film grain
+  era-appropriate, and round-trips results through Apple Photos intact. Use for
+  upscaling, old-photo restoration, scanned prints, noise and grain handling,
   deblurring, and face-reference-guided restoration. Prefer faithful recovery
   over creative reconstruction or beautification.
 metadata:
@@ -13,6 +17,35 @@ metadata:
 ---
 
 # Photo Upscale & Enhance — Fidelity First
+
+## Preferred image models
+
+The pixel work is done by an image model, and not all of them behave the same
+way on a restoration. The two that have held up in practice are the **image
+models available through Gemini** and **through Codex**. Prefer those when a
+choice exists.
+
+What that means operationally:
+
+- Use the model's **image editing** path, passing the source as the image to
+  edit, not a text-to-image prompt that describes it. A generated lookalike is
+  not a restoration, however good it looks.
+- Ask for the **lowest edit strength** the tool exposes. These models will
+  happily rerender a face at full strength and hand back a plausible stranger.
+- Re-check grain and flat-region texture every time. A super-resolution pass is
+  where film grain gets averaged into blotches, and a model that returns smooth
+  skin has silently decided the photo was digital.
+- Match the prompt to the model. The templates in
+  [references/prompt-templates.md](references/prompt-templates.md) are written to
+  work across them; trim to what a given model actually honours rather than
+  assuming every clause is respected.
+- A model refusing or producing a changed subject is a normal outcome. Reduce
+  processing, mask the affected area, or fall back to a deterministic resample.
+  Do not retry until it gives you something prettier.
+
+When neither is available, any editing-capable model is acceptable under the
+same constraints, with the same verification. The models are the executor; the
+fidelity rules and the checks are what make the result a restoration.
 
 ## Objective and priority
 

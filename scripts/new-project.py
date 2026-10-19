@@ -22,6 +22,7 @@ A project is optional. For a single photo, call finalize.py with plain paths.
 """
 
 import argparse
+import filecmp
 import json
 import os
 import shutil
@@ -35,7 +36,7 @@ SUBDIRS = ("source", "refs/face", "refs/body", "output", "qa")
 
 README = """# {name}
 
-Restoration project scaffolded {date} by photo-upscale-enhance.
+Restoration project scaffolded {date} by photo-restore.
 
 - `source/` -- the photograph(s) to restore. Read-only: nothing writes here.
 - `refs/face/` -- identity references. Bone structure, feature proportions,
@@ -135,13 +136,22 @@ def copy_in(files, dest, project, rename=None, role="file"):
             raise SystemExit(f"Not found: {f}")
         name = f"{f.stem}{rename}{f.suffix}" if rename else f.name
         target = dest / name
-        if target.exists() and target.resolve() != f.resolve():
-            # source/ is read-only evidence. Replacing a file there would silently
-            # swap the thing being restored, which is the worst possible outcome.
-            raise SystemExit(
-                f"{target.relative_to(project)} already exists. Rename the incoming "
-                f"{role} or use a different project; refusing to overwrite evidence."
-            )
+        if target.exists():
+            # Re-running with the same arguments must be idempotent; only a
+            # *different* file under the same name is a problem.
+            same = (target.resolve() == f.resolve()
+                    or (target.stat().st_size == f.stat().st_size
+                        and filecmp.cmp(f, target, shallow=False)))
+            if not same:
+                # source/ is read-only evidence. Replacing a file there would
+                # silently swap the thing being restored.
+                raise SystemExit(
+                    f"{target.relative_to(project)} already exists and differs. Rename "
+                    f"the incoming {role} or use a different project; refusing to "
+                    "overwrite evidence."
+                )
+            placed.append(str(target.relative_to(project)))
+            continue
         if not target.exists():
             shutil.copy2(f, target)
             # A sidecar carries metadata that exists nowhere else. Copying the
@@ -184,7 +194,7 @@ def main():
         "schema": SCHEMA,
         "name": name,
         "created": previous.get("created") or datetime.now(timezone.utc).isoformat(timespec="seconds"),
-        "tool": "photo-upscale-enhance 2.0",
+        "tool": "photo-restore 2.0",
         "sources": merge_list(previous.get("sources"), placed_source),
         "masters": merge_list(previous.get("masters"), placed_master),
         "references": {

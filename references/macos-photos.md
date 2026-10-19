@@ -89,7 +89,7 @@ capture tags, this lands in the right place chronologically:
 ```sh
 osxphotos import ./output/IMG_1234_upscale.jpg \
   --album "<project> restored" \
-  --keyword "photo-upscale-enhance" \
+  --keyword "photo-restore" \
   --skip-dups
 ```
 

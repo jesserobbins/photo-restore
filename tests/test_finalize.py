@@ -498,3 +498,70 @@ def test_cross_filesystem_output_does_not_strand_an_empty_file(tmp_path):
     assert r.returncode == 0, r.stdout + r.stderr
     assert (out / "s_upscale.jpg").exists()
     assert not list(out.glob(".finalize-*")), "staging dir should be cleaned up"
+
+
+# --------------------------------------------------------------------------- #
+# iteration 4 regressions
+# --------------------------------------------------------------------------- #
+
+@pytestmark_needs_pillow
+def test_keyword_containing_a_comma_survives(tmp_path):
+    """'Washington, D.C.' is one keyword; comma-joining then splitting breaks it."""
+    src = make_jpeg(tmp_path / "s.jpg")
+    subprocess.run(["exiftool", "-q", "-overwrite_original",
+                    "-Keywords=Washington, D.C.", "-Subject=Smith, John",
+                    str(src)], check=True)
+    render = make_jpeg(tmp_path / "r.jpg", size=(120, 90), tags=False)
+    r = run_cli(src, render)
+    assert r.returncode == 0, r.stdout + r.stderr
+
+    kw = subprocess.run(["exiftool", "-q", "-s3", "-Keywords",
+                         str(tmp_path / "s_upscale.jpg")],
+                        capture_output=True, text=True).stdout
+    assert "Washington, D.C." in kw, kw
+
+
+@pytestmark_needs_pillow
+def test_truncated_output_is_a_failure_not_a_pass(tmp_path):
+    src = make_jpeg(tmp_path / "s.jpg")
+    render = make_jpeg(tmp_path / "r.jpg", size=(120, 90), tags=False)
+    # Valid headers, no pixel data: the kind of render a crashed upscaler leaves.
+    data = render.read_bytes()
+    render.write_bytes(data[: len(data) // 3])
+    r = run_cli(src, render)
+    assert r.returncode != 0
+    assert not (tmp_path / "s_upscale.jpg").exists() or \
+        list(tmp_path.glob("*_UNVERIFIED*"))
+
+
+@pytestmark_needs_pillow
+def test_xmp_dimensions_are_corrected(tmp_path):
+    src = make_jpeg(tmp_path / "s.jpg")
+    subprocess.run(["exiftool", "-q", "-overwrite_original",
+                    "-XMP-exif:ExifImageWidth=60", "-XMP-exif:ExifImageHeight=45",
+                    str(src)], check=True)
+    render = make_jpeg(tmp_path / "r.jpg", size=(120, 90), tags=False)
+    r = run_cli(src, render)
+    assert r.returncode == 0, r.stdout + r.stderr
+    got = subprocess.run(["exiftool", "-q", "-s3", "-XMP-exif:ExifImageWidth",
+                          str(tmp_path / "s_upscale.jpg")],
+                         capture_output=True, text=True).stdout.strip()
+    assert got in ("", "120"), got
+
+
+@pytestmark_needs_pillow
+def test_grain_disclosed_reflects_the_file_not_the_plan(tmp_path):
+    """A degraded run writes no provenance, so it must not claim disclosure."""
+    src = make_jpeg(tmp_path / "s.jpg")
+    render = make_jpeg(tmp_path / "r.jpg", size=(120, 90), tags=False)
+    env = dict(os.environ)
+    env["PATH"] = os.pathsep.join(
+        p for p in env.get("PATH", "").split(os.pathsep)
+        if not (Path(p) / "exiftool").exists()
+    )
+    r = run_cli(src, render, "--json", "--grain", "reconstructed", env=env)
+    assert r.returncode == 0, r.stderr
+    entry = json.loads(r.stdout)
+    assert entry["verification"] == "degraded"
+    assert entry["grain_disclosed"] is False, \
+        "no provenance was written, so no disclosure was made"

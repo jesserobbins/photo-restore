@@ -4,6 +4,23 @@ These prompts are intended for image-editing tools receiving source imagery.
 Pass the *target image* explicitly, plus any separately identified reference
 images. Prefer low edit strength and localized corrections.
 
+## Which model to hand this to
+
+The image models reachable through **Gemini** and **Codex** have held up best on
+restoration work; prefer them when there is a choice. Two habits matter more than
+the choice itself:
+
+- Use the model's **image-editing** path with the source passed as the image to
+  edit. A text-to-image prompt that describes the photo produces a lookalike, and
+  a lookalike is not a restoration however good it is.
+- Ask for the **lowest edit strength** the tool exposes, then check grain and
+  flat-region texture. A model that returns smooth skin made a decision about
+  what kind of photo it was looking at.
+
+These templates are deliberately model-agnostic so they survive a model change.
+Trim clauses a given model ignores rather than assuming every sentence is
+honoured, and re-verify after any model or version change.
+
 ## Grain clause
 
 Append the clause that matches the decision from `references/film-grain.md`.

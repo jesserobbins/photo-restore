@@ -32,7 +32,7 @@ owner's words.
 
 One sentence, written to every place a different reader looks:
 
-> Upscaled 2.0x (4000x3000 to 8000x6000) by photo-upscale-enhance 2.0,
+> Upscaled 2.0x (4000x3000 to 8000x6000) by photo-restore 2.0,
 > conservative mode, on 2026-10-19. Source: IMG_1234.jpg. Capture date unchanged.
 
 | Location | Reader |
@@ -43,7 +43,7 @@ One sentence, written to every place a different reader looks:
 | `XMP-dc:Description`, `IPTC:Caption-Abstract` | search, DAMs, Photos.app |
 | `IPTC:Keywords` | Photos.app tagging and search |
 
-The keywords `upscaled` and `photo-upscale-enhance` make a batch findable later.
+The keywords `upscaled` and `photo-restore` make a batch findable later.
 `--keyword` adds more; `--no-keywords` suppresses them.
 
 ### When goes in the history, not in a date field
@@ -158,9 +158,9 @@ if [ -n "$EXISTING" ]; then NOTE="$EXISTING $NOTE"; fi
 exiftool -overwrite_original -Orientation#=1 -XMP-tiff:Orientation#=1 \
   -ExifImageWidth="$W" -ExifImageHeight="$H" \
   -ThumbnailImage= -PreviewImage= \
-  -Software="photo-upscale-enhance 2.0" \
+  -Software="photo-restore 2.0" \
   -UserComment="$NOTE" \
-  "-XMP-xmpMM:History+={Action=saved,SoftwareAgent=photo-upscale-enhance 2.0,When=$NOW}" \
+  "-XMP-xmpMM:History+={Action=saved,SoftwareAgent=photo-restore 2.0,When=$NOW}" \
   "$DST"
 ```
 

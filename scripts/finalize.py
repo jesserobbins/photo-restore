@@ -35,7 +35,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 VERSION = "2.0"
-TOOL = "photo-upscale-enhance"
+TOOL = "photo-restore"
 PROG = f"{TOOL} {VERSION}"
 
 # Source tags that must survive into the output. Missing any of these is a hard
@@ -131,6 +131,18 @@ def image_orientation(path):
         value = exiftool_read(path, ["Orientation"], numeric=True).get("Orientation")
         if value and value.isdigit():
             return value
+    if have("magick"):
+        # sips and magick can read HEIC EXIF where Pillow cannot.
+        proc = run(["magick", "identify", "-format", "%[EXIF:Orientation]", str(path)])
+        if proc.returncode == 0 and proc.stdout.strip().isdigit():
+            return proc.stdout.strip()
+    if have("sips"):
+        proc = run(["sips", "-g", "orientation", str(path)])
+        found = re.search(r"orientation:\s*(\w+)", proc.stdout)
+        if found:
+            names = {"up": "1", "down": "3", "left": "6", "right": "8"}
+            if found.group(1).lower() in names:
+                return names[found.group(1).lower()]
     return "1"
 
 
@@ -162,9 +174,11 @@ def read_state(path):
     tags = exiftool_read(
         path,
         ["Orientation", "DateTimeOriginal", "CreateDate", "Make", "Model", "Rating",
-         "Keywords", "Caption-Abstract", "Description", "Subject", "UserComment",
-         "Software"],
+         "Caption-Abstract", "Description", "UserComment", "Software"],
     )
+    # List tags are read as lists so a keyword containing a comma survives.
+    tags["Keywords"] = exiftool_read_list(path, "Keywords")
+    tags["Subject"] = exiftool_read_list(path, "Subject")
     tags["Orientation#"] = exiftool_read(path, ["Orientation"], numeric=True).get("Orientation")
     # Bare -GPSLatitude resolves to the composite, which is the readable form.
     tags["GPSLatitude"] = exiftool_read(path, ["GPSLatitude"]).get("GPSLatitude")
@@ -242,11 +256,40 @@ def merge_keywords(existing, new):
     return out
 
 
+def exiftool_read_list(path, tag):
+    """Read a list tag as a real list.
+
+    `-s3` joins list values with ", ", which splits an owner keyword like
+    "Washington, D.C." into two when split back apart. JSON gives the actual list.
+    """
+    proc = run(["exiftool", "-q", "-q", "-json", f"-{tag}", str(path)])
+    if proc.returncode != 0 or not proc.stdout.strip():
+        return []
+    try:
+        data = json.loads(proc.stdout)
+    except ValueError:
+        return []
+    if not data:
+        return []
+    value = data[0].get(tag)
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return [str(v).strip() for v in value if str(v).strip()]
+    return [str(value).strip()] if str(value).strip() else []
+
+
 def parse_keywords(raw):
-    """exiftool prints list tags joined by ', '."""
+    """Normalise a list tag to a list.
+
+    read_state returns real lists now; a string can still arrive from a caller
+    that read the tag with -s3, so accept both rather than guessing.
+    """
     if not raw:
         return []
-    return [k.strip() for k in raw.split(",") if k.strip()]
+    if isinstance(raw, (list, tuple)):
+        return [str(k).strip() for k in raw if str(k).strip()]
+    return [k.strip() for k in str(raw).split(",") if k.strip()]
 
 
 # --------------------------------------------------------------------------- #
@@ -350,8 +393,17 @@ def source_embed(source, render, out_size):
                     sub.pop(EXIF_PIXEL_Y, None)
                 embed["exif"] = exif.tobytes()
         source_icc = src.info.get("icc_profile")
-        with Image.open(render) as rnd:
-            render_icc = rnd.info.get("icc_profile")
+        render_icc = None
+        try:
+            with Image.open(render) as rnd:
+                # Only carry the render's profile when its pixels keep their colour
+                # model. A CMYK render converted to RGB must not ship a press
+                # profile on 3-channel data.
+                if rnd.mode in ("RGB", "L"):
+                    render_icc = rnd.info.get("icc_profile")
+        except Exception:
+            # decode() may still handle it (HEIC); its profile cannot be read here.
+            render_icc = None
         if render_icc:
             embed["icc_profile"] = render_icc
         elif source_icc:
@@ -373,7 +425,7 @@ def encode(render, target_format, workdir, quality, embed=None, transcode=False)
         # metadata pass handle tags. Anything else costs a quality generation.
         out = workdir / f"stage{render.suffix}"
         shutil.copy2(render, out)
-        return out, False, "container and orientation already correct, pixels untouched"
+        return out, False, "container and orientation already correct, pixels untouched", True
 
     out = workdir / f"stage{FORMAT_EXT[target_format]}"
     from PIL import Image, ImageOps
@@ -391,6 +443,7 @@ def encode(render, target_format, workdir, quality, embed=None, transcode=False)
             )
 
     save_kw = dict(embed or {})
+    colour_model_preserved = False
     with Image.open(staged) as im:
         # Baking the transform here is why the orientation tag can be normalised
         # afterwards: after this point the pixels are upright.
@@ -407,6 +460,7 @@ def encode(render, target_format, workdir, quality, embed=None, transcode=False)
                     "would have to guess a black point."
                 )
         if target_format == "jpeg":
+            colour_model_preserved = im.mode in ("RGB", "L")
             if im.mode in ("RGBA", "LA", "P"):
                 base = Image.new("RGB", im.size, (255, 255, 255))
                 rgba = im.convert("RGBA")
@@ -426,10 +480,10 @@ def encode(render, target_format, workdir, quality, embed=None, transcode=False)
         detail += f" (decoded by {decoder})"
     if transcode:
         detail += " (orientation baked)"
-    return out, True, detail
+    return out, True, detail, colour_model_preserved
 
 
-def copy_metadata(source, dest, render):
+def copy_metadata(source, dest, render, colour_model_preserved=True):
     """Pass 1: copy everything the source knows, including an XMP sidecar.
 
     `osxphotos export --sidecar xmp` puts metadata next to the file rather than in
@@ -440,11 +494,12 @@ def copy_metadata(source, dest, render):
 
     # The render's own ICC profile describes the render's pixels. Copying the
     # source's over it would relabel the colour space without converting it.
-    render_icc = None
-    from PIL import Image
-    with Image.open(render) as rnd:
-        render_icc = rnd.info.get("icc_profile")
-    if render_icc:
+    # Read it with exiftool, not Pillow: a HEIC render is supported by encode()
+    # through magick/sips and would crash here after the output was published.
+    render_has_icc = bool(
+        exiftool_read(render, ["ICC_Profile:ProfileDescription"]).get("ICC_Profile:ProfileDescription")
+    )
+    if render_has_icc and colour_model_preserved:
         ok_icc, warn_icc = exiftool_write(
             dest, ["-TagsFromFile", str(render), "-ICC_Profile:all"]
         )
@@ -456,15 +511,27 @@ def copy_metadata(source, dest, render):
     if sidecar.exists():
         # A sidecar replaces list tags wholesale, so keep what the image had and
         # union it with the sidecar's values instead of letting one win.
-        before = parse_keywords(exiftool_read(dest, ["Subject"]).get("Subject"))
+        before_sub = exiftool_read_list(dest, "Subject")
+        before_desc = exiftool_read(dest, ["Description"]).get("Description") or ""
         ok2, warn2 = exiftool_write(
             dest, ["-TagsFromFile", str(sidecar), "-all:all", "-unsafe"]
         )
-        after = parse_keywords(exiftool_read(dest, ["Subject"]).get("Subject"))
-        merged = merge_keywords(before, after)
-        if merged and merged != after:
+        after_sub = exiftool_read_list(dest, "Subject")
+        merged = merge_keywords(before_sub, after_sub)
+        if merged and merged != after_sub:
             args = ["-Subject="] + [f"-Subject+={kw}" for kw in merged]
-            exiftool_write(dest, args)
+            ok_m, warn_m = exiftool_write(dest, args)
+            ok = ok and ok_m
+            warn = "\n".join(w for w in (warn, warn_m) if w)
+        # A sidecar's Description replaces the embedded one; the embedded text is
+        # the owner's words, so it is preserved ahead of the sidecar's.
+        after_desc = exiftool_read(dest, ["Description"]).get("Description") or ""
+        if before_desc.strip() and before_desc.strip() not in after_desc:
+            ok_d, warn_d = exiftool_write(
+                dest, ["-Description=" + append_text(before_desc, after_desc)]
+            )
+            ok = ok and ok_d
+            warn = "\n".join(w for w in (warn, warn_d) if w)
         ok = ok and ok2
         warn = "\n".join(w for w in (warn, warn2) if w)
         used = True
@@ -488,6 +555,12 @@ def correct_metadata(dest, out_size, note, keywords, appearance=True):
         "-XMP-tiff:Orientation#=1",
         f"-ExifImageWidth={out_size[0]}",
         f"-ExifImageHeight={out_size[1]}",
+        # XMP carries its own copy of the dimensions, and Lightroom/Photos
+        # sources usually have it. Stale XMP size is the same lie as stale EXIF.
+        f"-XMP-exif:ExifImageWidth={out_size[0]}",
+        f"-XMP-exif:ExifImageHeight={out_size[1]}",
+        f"-XMP-tiff:ImageWidth={out_size[0]}",
+        f"-XMP-tiff:ImageHeight={out_size[1]}",
         f"-Software={PROG}",
         f"-CreatorTool={PROG}",
         f"-UserComment={append_text(existing_comment, note)}",
@@ -567,6 +640,18 @@ def verify(source, dest, source_state, out_size, note, use_exiftool,
                 f"ExifImageWidth says {tagged_w} but the file is {real[0]} pixels wide; "
                 "half-copied metadata is worse than none"
             )
+        if use_exiftool:
+            for xmp_tag in ("XMP-exif:ExifImageWidth", "XMP-tiff:ImageWidth"):
+                val = exiftool_read(dest, [xmp_tag], numeric=True).get(xmp_tag)
+                if val and val.isdigit() and int(val) != real[0]:
+                    problems.append(f"{xmp_tag} says {val} but the file is {real[0]} pixels wide")
+        # Headers can be intact over truncated pixel data, so read the pixels.
+        try:
+            from PIL import Image
+            with Image.open(dest) as chk:
+                chk.load()
+        except Exception as exc:
+            problems.append(f"the output cannot be decoded: {exc}")
         if abs(real[0] / real[1] - out_size[0] / out_size[1]) > 0.005:
             problems.append("output aspect ratio drifted from the value recorded")
 
@@ -804,11 +889,13 @@ def main():
         out_dir, a.source.stem, a.suffix, ext, a.force
     )
     plan["output"] = str(out_path)
-    # Stage on the destination filesystem: os.replace cannot cross volumes, and an
-    # external or archival drive is exactly where these outputs go.
-    workdir = Path(tempfile.mkdtemp(dir=out_dir, prefix=".finalize-"))
     published = False
+    workdir = None
     try:
+        # Stage on the destination filesystem: os.replace cannot cross volumes,
+        # and an external or archival drive is exactly where these go. Creation is
+        # inside the try so a failure still releases the reservation.
+        workdir = Path(tempfile.mkdtemp(dir=out_dir, prefix=".finalize-"))
         # Without exiftool there is no way to merge tags, so the source's EXIF is
         # embedded during the single save instead. One encode, never read-then-
         # rewrite the same path.
@@ -816,7 +903,7 @@ def main():
             a.source, a.render, render_display
         )
         transcode = render_orientation not in ("1", "0")
-        staged, transcoded, encode_note = encode(
+        staged, transcoded, encode_note, colour_ok = encode(
             a.render, target_format, workdir, a.quality, embed=embed, transcode=transcode
         )
         os.replace(staged, out_path)
@@ -826,7 +913,9 @@ def main():
         copy_warn = ""
         sidecar_used = False
         if use_exiftool:
-            copy_ok, copy_warn, sidecar_used = copy_metadata(a.source, out_path, a.render)
+            copy_ok, copy_warn, sidecar_used = copy_metadata(
+                a.source, out_path, a.render, colour_model_preserved=colour_ok
+            )
             if not copy_ok:
                 write_problems.append("exiftool could not copy metadata from the source")
             correct_ok, correct_warn = correct_metadata(
@@ -879,7 +968,13 @@ def main():
             "keywords": keywords,
             "appearance_tags_touched": not a.no_appearance_tags,
             "grain": a.grain,
-            "grain_disclosed": GRAIN_DISCLOSURE in (note or ""),
+            # Computed from the file, not the plan: a degraded run writes no
+            # provenance, and the flag must not claim a disclosure it never made.
+            "grain_disclosed": bool(
+                use_exiftool and GRAIN_DISCLOSURE in (
+                    exiftool_read(out_path, ["UserComment"]).get("UserComment") or ""
+                )
+            ),
             "master_filename": a.master_name,
             "verification": status,
             "verification_detail": report,
@@ -910,7 +1005,8 @@ def main():
 
         return 1 if status == "fail" else 0
     finally:
-        shutil.rmtree(workdir, ignore_errors=True)
+        if workdir is not None:
+            shutil.rmtree(workdir, ignore_errors=True)
         if not published and reserved_new:
             # An exit before publication must not leave a zero-byte file wearing a
             # delivery name, or the next run is pushed to "-2" for no reason.

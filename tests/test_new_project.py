@@ -112,3 +112,19 @@ def test_refuses_a_nonempty_directory_without_force(tmp_path):
     r = run_cli(proj)
     assert r.returncode != 0
     assert "--force" in r.stdout + r.stderr
+
+
+def test_rerunning_with_identical_arguments_is_idempotent(tmp_path):
+    src = make_image(tmp_path / "target.jpg")
+    ref = make_image(tmp_path / "face.jpg")
+    proj = tmp_path / "p"
+
+    first = run_cli(proj, "--source", src, "--face", ref)
+    assert first.returncode == 0, first.stderr
+    second = run_cli(proj, "--source", src, "--face", ref, "--force")
+    assert second.returncode == 0, second.stderr
+    assert "already exists" not in (second.stdout + second.stderr)
+
+    data = json.loads((proj / "manifest.json").read_text())
+    assert data["sources"] == ["source/target.jpg"]
+    assert data["references"]["face"] == ["refs/face/face.jpg"]

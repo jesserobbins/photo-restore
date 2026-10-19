@@ -122,7 +122,9 @@ def write_manifest(root, path, data):
 
 def _place_sidecar(sidecar, sidecar_dest):
     """Sidecars follow the same evidence rule as images: never silently replaced."""
-    if sidecar_dest.exists():
+    try:
+        fd = os.open(sidecar_dest, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+    except FileExistsError:
         if not filecmp.cmp(sidecar, sidecar_dest, shallow=False):
             raise SystemExit(
                 f"{sidecar_dest.name} already exists with different metadata. Rename "
@@ -130,7 +132,8 @@ def _place_sidecar(sidecar, sidecar_dest):
                 "overwrite evidence."
             )
         return
-    shutil.copy2(sidecar, sidecar_dest)
+    os.close(fd)
+    shutil.copyfile(sidecar, sidecar_dest)
 
 
 def merge_list(old, new):
@@ -180,8 +183,14 @@ def copy_in(files, dest, project, rename=None, role="file"):
                 "check for a concurrent scaffold"
             )
         os.close(fd)
-        shutil.copyfile(f, target)
-        shutil.copystat(f, target)
+        try:
+            shutil.copyfile(f, target)
+            shutil.copystat(f, target)
+        except Exception:
+            # Leaving a truncated file behind would make every later run reject it
+            # as differing evidence, so the claim is released on failure.
+            target.unlink(missing_ok=True)
+            raise
         if sidecar.exists():
             _place_sidecar(sidecar, sidecar_dest)
         placed.append(str(target.relative_to(project)))

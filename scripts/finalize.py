@@ -428,6 +428,22 @@ def source_embed(source, render, out_size, target_format):
     """
     embed = {}
     notes = []
+    # The render's profile is read first and separately: a source Pillow cannot
+    # open (HEIC) must not cost the render its own colour description.
+    try:
+        from PIL import Image
+        with Image.open(render) as rnd:
+            if profile_survives(rnd.mode, target_format):
+                if rnd.info.get("icc_profile"):
+                    embed["icc_profile"] = rnd.info["icc_profile"]
+            elif rnd.info.get("icc_profile"):
+                notes.append(
+                    "the render's ICC profile was dropped: its colour model changed "
+                    "during the encode, so the profile no longer describes the output"
+                )
+    except Exception:
+        pass
+
     try:
         from PIL import Image
         with Image.open(source) as src:
@@ -445,20 +461,7 @@ def source_embed(source, render, out_size, target_format):
                     sub.pop(EXIF_PIXEL_Y, None)
                 embed["exif"] = exif.tobytes()
         source_icc = src.info.get("icc_profile")
-        render_icc = None
-        try:
-            with Image.open(render) as rnd:
-                # Same rule as encode(): the profile must still describe the mode
-                # the pixels end up in. An LA render flattened to RGB must not keep
-                # a grayscale profile.
-                if profile_survives(rnd.mode, target_format):
-                    render_icc = rnd.info.get("icc_profile")
-        except Exception:
-            # decode() may still handle it (HEIC); its profile cannot be read here.
-            render_icc = None
-        if render_icc:
-            embed["icc_profile"] = render_icc
-        elif source_icc:
+        if source_icc and "icc_profile" not in embed:
             notes.append(
                 "the source ICC profile was not carried: the output holds the render's "
                 "pixels, whose own profile either does not exist or no longer "
@@ -528,10 +531,13 @@ def encode(render, target_format, workdir, quality, embed=None, transcode=False)
                     "--format tiff, or provide an 8-bit render; mapping it to JPEG "
                     "would have to guess a black point."
                 )
-        if not embed:
-            # Pillow's PNG and TIFF writers read EXIF and ICC out of im.info, so a
-            # transcode can carry the render's tags even though nothing was passed.
+        # Pillow's PNG and TIFF writers read EXIF and ICC out of im.info, so a
+        # transcode can carry the render's tags even though nothing was passed.
+        # Clear each one unless this run is deliberately supplying it: an embed
+        # holding only an ICC profile is still no reason to keep the render's EXIF.
+        if "exif" not in save_kw:
             im.info.pop("exif", None)
+        if "icc_profile" not in save_kw:
             im.info.pop("icc_profile", None)
         if target_format == "jpeg":
             if im.mode in ("RGBA", "LA", "P"):

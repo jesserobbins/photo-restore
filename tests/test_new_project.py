@@ -144,3 +144,21 @@ def test_refused_image_does_not_leave_its_sidecar_behind(tmp_path):
     assert not (proj / "source" / "keep.jpg.xmp").exists(), \
         "the refused photo's sidecar must not land beside the kept source"
     assert (proj / "source" / "keep.jpg").read_bytes() == kept.read_bytes()
+
+
+def test_differing_sidecar_is_refused_not_overwritten(tmp_path):
+    """A sidecar is evidence too, so it follows the same no-clobber rule."""
+    src = make_image(tmp_path / "a" / "img.jpg")
+    (tmp_path / "a" / "img.jpg.xmp").write_text("<x:xmpmeta>first</x:xmpmeta>")
+    proj = tmp_path / "p"
+    r = run_cli(proj, "--source", src)
+    assert r.returncode == 0, r.stderr
+    assert (proj / "source" / "img.jpg.xmp").read_text().endswith("first</x:xmpmeta>")
+
+    other = make_image(tmp_path / "b" / "img.jpg", (200, 200, 200))
+    (tmp_path / "b" / "img.jpg.xmp").write_text("<x:xmpmeta>second</x:xmpmeta>")
+    r = run_cli(proj, "--force", "--source", other)
+    assert r.returncode != 0
+    assert "already exists" in (r.stdout + r.stderr)
+    kept = (proj / "source" / "img.jpg.xmp").read_text()
+    assert "first" in kept and "second" not in kept

@@ -691,11 +691,25 @@ def test_16bit_grayscale_keeps_its_gray_profile(tmp_path):
     """16-bit gray rescaled to 8-bit L is still gray, so the profile still fits."""
     gray = Image.new("I;16", (60, 45), 32768)
     gray.save(tmp_path / "r.tif")
+    profiles = [p for p in Path("/System/Library/ColorSync/Profiles").glob("*.icc")
+                if "gray" in p.name.lower() or "grey" in p.name.lower()]
+    if not profiles:
+        pytest.skip("no grayscale ICC profile available")
+    subprocess.run(["exiftool", "-q", "-overwrite_original",
+                    f"-ICC_Profile<={profiles[0]}", str(tmp_path / "r.tif")], check=True)
+
     src = make_jpeg(tmp_path / "s.jpg", size=(60, 45))
     r = run_cli(src, tmp_path / "r.tif", "--format", "jpeg")
     assert r.returncode == 0, r.stdout + r.stderr
+
     with Image.open(tmp_path / "s_upscale.jpg") as im:
         assert im.mode == "L"
+    space = subprocess.run(
+        ["exiftool", "-q", "-s3", "-ICC_Profile:ColorSpaceData",
+         str(tmp_path / "s_upscale.jpg")],
+        capture_output=True, text=True).stdout.strip()
+    assert space.upper() in ("GRAY", "GREY"), \
+        f"16-bit gray lost its gray profile ({space!r})"
 
 
 @pytestmark_needs_pillow
@@ -749,3 +763,37 @@ def test_create_date_only_source_keeps_its_date(tmp_path):
                          capture_output=True, text=True).stdout.strip()
     assert got == "1962:06:14 11:05:00", f"owner's CreateDate lost: {got!r}"
     assert not list(tmp_path.glob("*_UNVERIFIED*")), "a correct run was quarantined"
+
+
+@pytestmark_needs_pillow
+def test_no_exiftool_does_not_inherit_the_render_date(tmp_path):
+    """The degraded path relies on always re-encoding; pin that."""
+    src = make_jpeg(tmp_path / "s.jpg", tags=False)
+    render = make_jpeg(tmp_path / "r.jpg", size=(120, 90), tags=True)  # carries a date
+    env = dict(os.environ)
+    env["PATH"] = os.pathsep.join(
+        p for p in env.get("PATH", "").split(os.pathsep)
+        if not (Path(p) / "exiftool").exists()
+    )
+    r = run_cli(src, render, "--json", env=env)
+    assert r.returncode == 0, r.stderr
+    entry = json.loads(r.stdout)
+    assert entry["verification"] == "degraded"
+
+    got = subprocess.run(["exiftool", "-q", "-s3", "-DateTimeOriginal", entry["output"]],
+                         capture_output=True, text=True).stdout.strip()
+    assert got == "", f"degraded run inherited the render date {got!r}"
+
+
+@pytestmark_needs_pillow
+def test_png_transcode_does_not_inherit_render_exif(tmp_path):
+    """Pillow's PNG writer reads EXIF out of im.info, so a transcode can smuggle it."""
+    src = make_jpeg(tmp_path / "s.jpg", tags=False)          # undated source
+    render = make_jpeg(tmp_path / "r.jpg", size=(120, 90), tags=True)
+    r = run_cli(src, render, "--format", "png")
+    assert r.returncode == 0, r.stdout + r.stderr
+
+    got = subprocess.run(["exiftool", "-q", "-s3", "-DateTimeOriginal",
+                          str(tmp_path / "s_upscale.png")],
+                         capture_output=True, text=True).stdout.strip()
+    assert got == "", f"render EXIF survived the transcode ({got!r})"

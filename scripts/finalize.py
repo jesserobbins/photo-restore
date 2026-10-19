@@ -345,7 +345,8 @@ GRAY_FAMILY = {"L", "LA", "La"}
 
 
 # Modes that JPEG flattens into RGB, invalidating a grayscale or press profile.
-JPEG_BREAKS_PROFILE = {"CMYK", "YCCK", "LAB", "HSV", "LA", "La"}
+# "1" is bilevel: encode() converts it to RGB, where a gray profile no longer fits.
+JPEG_BREAKS_PROFILE = {"CMYK", "YCCK", "LAB", "HSV", "LA", "La", "1"}
 
 
 def profile_survives(render_mode, target_format):
@@ -480,7 +481,12 @@ def encode(render, target_format, workdir, quality, embed=None, transcode=False)
         # here means the source's metadata is written onto a blank slate, so
         # there is nothing to un-invent: an editing tool's camera, location,
         # caption or processing date cannot survive into a delivered file.
-        exiftool_write(out, ["-all="])
+        ok_strip, warn_strip = exiftool_write(out, ["-all="])
+        if not ok_strip:
+            # The whole blank-slate guarantee rests on this. Delivering an
+            # unstripped file would carry the render's camera, location, caption
+            # and processing date as if they were the photograph's.
+            die(f"could not strip the render's metadata, nothing was written: {warn_strip}")
         return out, False, "pixels untouched; render metadata stripped", True
 
     out = workdir / f"stage{FORMAT_EXT[target_format]}"
@@ -522,6 +528,11 @@ def encode(render, target_format, workdir, quality, embed=None, transcode=False)
                     "--format tiff, or provide an 8-bit render; mapping it to JPEG "
                     "would have to guess a black point."
                 )
+        if not embed:
+            # Pillow's PNG and TIFF writers read EXIF and ICC out of im.info, so a
+            # transcode can carry the render's tags even though nothing was passed.
+            im.info.pop("exif", None)
+            im.info.pop("icc_profile", None)
         if target_format == "jpeg":
             if im.mode in ("RGBA", "LA", "P"):
                 base = Image.new("RGB", im.size, (255, 255, 255))
@@ -536,6 +547,12 @@ def encode(render, target_format, workdir, quality, embed=None, transcode=False)
             im.save(out, format="PNG", optimize=True, **save_kw)
         else:
             im.save(out, format="TIFF", compression="tiff_lzw", **save_kw)
+
+    if not embed and have("exiftool"):
+        # Same rule as the byte-copy path: strip whatever survived the encode.
+        ok_strip, warn_strip = exiftool_write(out, ["-all="])
+        if not ok_strip:
+            die(f"could not strip the render's metadata, nothing was written: {warn_strip}")
 
     detail = f"{render_fmt} -> {target_format}"
     if decoder:
@@ -581,14 +598,17 @@ def copy_metadata(source, dest, render, colour_model_preserved=True, reencoded=T
             ok_strip, warn_strip = exiftool_write(dest, ["-ICC_Profile:all="])
             ok = ok and ok_strip
             warn = "\n".join(w for w in (warn, warn_strip) if w)
-            reason = (
-                "the render's colour model changed, so its profile no longer applies"
-                if render_has_icc else
-                "the render carries no profile of its own"
-            )
+        # Report the loss whether it was the source's profile or the render's: a
+        # profile dropped without a word is a colour claim silently discarded.
+        if render_has_icc:
             icc_note = (
-                f"the source ICC profile was not carried: {reason}, so the source "
-                "profile would have mislabelled the output pixels"
+                "the render's ICC profile was dropped: its colour model changed during "
+                "the encode, so the profile no longer describes the output pixels"
+            )
+        elif source_has_icc:
+            icc_note = (
+                "the source ICC profile was not carried: the render carries no profile "
+                "of its own, so the source profile would have mislabelled the output"
             )
 
     sidecar = source.with_name(source.name + ".xmp")

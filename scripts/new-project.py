@@ -120,6 +120,19 @@ def write_manifest(root, path, data):
         fcntl.flock(lockfh, fcntl.LOCK_UN)
 
 
+def _place_sidecar(sidecar, sidecar_dest):
+    """Sidecars follow the same evidence rule as images: never silently replaced."""
+    if sidecar_dest.exists():
+        if not filecmp.cmp(sidecar, sidecar_dest, shallow=False):
+            raise SystemExit(
+                f"{sidecar_dest.name} already exists with different metadata. Rename "
+                "the incoming sidecar or use a different project; refusing to "
+                "overwrite evidence."
+            )
+        return
+    shutil.copy2(sidecar, sidecar_dest)
+
+
 def merge_list(old, new):
     out = list(old or [])
     for item in new:
@@ -154,8 +167,7 @@ def copy_in(files, dest, project, rename=None, role="file"):
                     f"the incoming {role} or use a different project; refusing to "
                     "overwrite evidence."
                 )
-            if sidecar.exists() and not sidecar_dest.exists():
-                shutil.copy2(sidecar, sidecar_dest)
+            _place_sidecar(sidecar, sidecar_dest) if sidecar.exists() else None
             placed.append(str(target.relative_to(project)))
             continue
         # Claim the name atomically, then fill it: two scaffold runs importing
@@ -171,7 +183,7 @@ def copy_in(files, dest, project, rename=None, role="file"):
         shutil.copyfile(f, target)
         shutil.copystat(f, target)
         if sidecar.exists():
-            shutil.copy2(sidecar, sidecar_dest)
+            _place_sidecar(sidecar, sidecar_dest)
         placed.append(str(target.relative_to(project)))
     return placed
 

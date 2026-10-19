@@ -266,13 +266,20 @@ def choose_format(source, requested):
     return "jpeg"
 
 
+def detected_format(path):
+    """Actual container from file contents. An extension is a claim, not a fact."""
+    try:
+        from PIL import Image
+        with Image.open(path) as im:
+            return (im.format or "").upper()
+    except Exception:
+        return ""
+
+
 def container_matches(path, target_format):
-    ext = path.suffix.lower()
-    if target_format == "jpeg":
-        return ext in {".jpg", ".jpeg"}
-    if target_format == "png":
-        return ext == ".png"
-    return ext in {".tif", ".tiff"}
+    """Compare real contents, not the filename: render.jpg may hold PNG bytes."""
+    expect = {"jpeg": "JPEG", "png": "PNG", "tiff": "TIFF"}[target_format]
+    return detected_format(path) == expect
 
 
 def pick_destination(out_dir, stem, suffix, ext, force):
@@ -289,6 +296,28 @@ def pick_destination(out_dir, stem, suffix, ext, force):
         n += 1
 
 
+def reserve_destination(out_dir, stem, suffix, ext, force):
+    """Claim the output path atomically, so two runs cannot pick the same name.
+
+    The manifest lock never protected output allocation: both runs could see the
+    same free name and the second move would silently replace the first result.
+    Creating the file with O_EXCL is the claim; a later os.replace fills it.
+    """
+    base = f"{stem}{suffix}"
+    for n in range(1, 1000):
+        candidate = out_dir / (f"{base}{ext}" if n == 1 else f"{base}-{n}{ext}")
+        if force and n == 1:
+            candidate.touch(exist_ok=True)
+            return candidate
+        try:
+            fd = os.open(candidate, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+        except FileExistsError:
+            continue
+        os.close(fd)
+        return candidate
+    die(f"could not find a free output name for {base}{ext}")
+
+
 def pick_quarantine(path):
     """A collision-free name for a failed output, never overwriting an earlier one."""
     candidate = path.with_name(path.stem + "_UNVERIFIED" + path.suffix)
@@ -299,23 +328,51 @@ def pick_quarantine(path):
     return candidate
 
 
-def source_embed(source):
-    """EXIF blob (orientation normalised) and ICC profile, for the no-exiftool path."""
+EXIF_PIXEL_X = 0xA002
+EXIF_PIXEL_Y = 0xA003
+
+
+def source_embed(source, render, out_size):
+    """EXIF blob and ICC profile for the no-exiftool path.
+
+    Two things must not be inherited blindly. Dimensions: the source's
+    ExifImageWidth describes the *source*, so it is rewritten to the real output
+    size, or dropped when Pillow cannot address it. Colour: the source's ICC
+    profile describes the source's pixels, so the render's own profile wins when
+    it has one.
+    """
     embed = {}
+    notes = []
     try:
         from PIL import Image
         with Image.open(source) as src:
-            icc = src.info.get("icc_profile")
-            if icc:
-                embed["icc_profile"] = icc
             if src.info.get("exif"):
                 exif = Image.Exif()
                 exif.load(src.info["exif"])
                 exif[274] = 1  # pixels are baked upright by the time this is attached
+                sub = exif.get_ifd(0x8769)
+                try:
+                    sub[EXIF_PIXEL_X] = out_size[0]
+                    sub[EXIF_PIXEL_Y] = out_size[1]
+                except Exception:
+                    notes.append("could not correct EXIF dimension tags; dropped instead")
+                    sub.pop(EXIF_PIXEL_X, None)
+                    sub.pop(EXIF_PIXEL_Y, None)
                 embed["exif"] = exif.tobytes()
-    except Exception:
-        pass
-    return embed
+        source_icc = src.info.get("icc_profile")
+        with Image.open(render) as rnd:
+            render_icc = rnd.info.get("icc_profile")
+        if render_icc:
+            embed["icc_profile"] = render_icc
+        elif source_icc:
+            embed["icc_profile"] = source_icc
+            notes.append(
+                "source ICC profile attached to render pixels that carry no profile "
+                "of their own; colour may be mislabelled"
+            )
+    except Exception as exc:
+        notes.append(f"could not build an embedded metadata blob: {exc}")
+    return embed, notes
 
 
 def encode(render, target_format, workdir, quality, embed=None, transcode=False):
@@ -348,6 +405,17 @@ def encode(render, target_format, workdir, quality, embed=None, transcode=False)
         # Baking the transform here is why the orientation tag can be normalised
         # afterwards: after this point the pixels are upright.
         im = ImageOps.exif_transpose(im)
+        if im.mode.startswith("I;16"):
+            # A 16-bit grayscale render must be rescaled, not clipped. Losing the
+            # tonal range would report as a pass because verify only measures
+            # dimensions and metadata.
+            im = im.convert("I").point(lambda v: v / 256.0).convert("L")
+        elif im.mode in ("I", "F"):
+            die(
+                f"the render is 32-bit {im.mode} data, which cannot be mapped to "
+                "8-bit output without guessing a black point. Use --format png or "
+                "--format tiff to keep the depth."
+            )
         if target_format == "jpeg":
             if im.mode in ("RGBA", "LA", "P"):
                 base = Image.new("RGB", im.size, (255, 255, 255))
@@ -372,20 +440,42 @@ def encode(render, target_format, workdir, quality, embed=None, transcode=False)
 
 
 def copy_metadata(source, dest):
-    """Pass 1: copy everything the source knows."""
-    return exiftool_write(dest, ["-TagsFromFile", str(source), "-all:all", "-unsafe"])
+    """Pass 1: copy everything the source knows, including an XMP sidecar.
+
+    `osxphotos export --sidecar xmp` puts metadata next to the file rather than in
+    it. Ignoring the sidecar silently drops captions and keywords that exist
+    nowhere else, and verification cannot see the loss.
+    """
+    ok, warn = exiftool_write(dest, ["-TagsFromFile", str(source), "-all:all", "-unsafe"])
+    sidecar = source.with_name(source.name + ".xmp")
+    used = False
+    if sidecar.exists():
+        ok2, warn2 = exiftool_write(
+            dest, ["-TagsFromFile", str(sidecar), "-all:all", "-unsafe"]
+        )
+        ok = ok and ok2
+        warn = "\n".join(w for w in (warn, warn2) if w)
+        used = True
+    return ok, warn, used
 
 
 def correct_metadata(dest, out_size, note, keywords, appearance=True):
     """Pass 2: fix what the upscale made false, and record provenance."""
+    # A source UserComment is the owner's words too, so it is appended to rather
+    # than replaced -- the same rule as the caption.
+    existing_comment = exiftool_read(dest, ["UserComment"]).get("UserComment")
     args = [
+        # A stale thumbnail is the pre-restoration pixels; some DAMs show it
+        # instead of the real image.
+        "-ThumbnailImage=",
+        "-PreviewImage=",
         # Numeric form is mandatory: -Orientation=1 is silently ignored.
         "-Orientation#=1",
         f"-ExifImageWidth={out_size[0]}",
         f"-ExifImageHeight={out_size[1]}",
         f"-Software={PROG}",
         f"-CreatorTool={PROG}",
-        f"-UserComment={note}",
+        f"-UserComment={append_text(existing_comment, note)}",
         "-XMP-xmpMM:History+="
         f"{{Action=saved,SoftwareAgent={PROG},"
         f"When={datetime.now().astimezone().isoformat(timespec='seconds')}}}",
@@ -409,7 +499,8 @@ def correct_metadata(dest, out_size, note, keywords, appearance=True):
     return exiftool_write(dest, args)
 
 
-def verify(source, dest, source_state, out_size, note, use_exiftool, grain="unknown"):
+def verify(source, dest, source_state, out_size, note, use_exiftool,
+           grain="unknown", target_format=None):
     """Compare output against source and against reality. Returns (status, report)."""
     problems, shortfalls = [], []
     out = read_state(dest) if use_exiftool else read_state_pillow(dest)
@@ -438,8 +529,17 @@ def verify(source, dest, source_state, out_size, note, use_exiftool, grain="unkn
     else:
         if real != tuple(out_size):
             problems.append(f"output is {real} but the run believed {tuple(out_size)}")
-        tagged_w = (exiftool_read(dest, ["ExifImageWidth"]).get("ExifImageWidth")
-                    if use_exiftool else None)
+        if use_exiftool:
+            tagged_w = exiftool_read(dest, ["ExifImageWidth"]).get("ExifImageWidth")
+        else:
+            # The degraded path can still be checked for stale dimensions, which
+            # is the one thing it is most likely to get wrong.
+            try:
+                from PIL import Image
+                with Image.open(dest) as im:
+                    tagged_w = str(im.getexif().get_ifd(0x8769).get(EXIF_PIXEL_X) or "")
+            except Exception:
+                tagged_w = ""
         if tagged_w and tagged_w.isdigit() and int(tagged_w) != real[0]:
             problems.append(
                 f"ExifImageWidth says {tagged_w} but the file is {real[0]} pixels wide; "
@@ -447,6 +547,13 @@ def verify(source, dest, source_state, out_size, note, use_exiftool, grain="unkn
             )
         if abs(real[0] / real[1] - out_size[0] / out_size[1]) > 0.005:
             problems.append("output aspect ratio drifted from the value recorded")
+
+    if target_format and detected_format(dest) != {"jpeg": "JPEG", "png": "PNG",
+                                                   "tiff": "TIFF"}[target_format]:
+        problems.append(
+            f"output container is {detected_format(dest) or 'unreadable'}, "
+            f"expected {target_format}"
+        )
 
     if use_exiftool:
         # Provenance is checked against the note that was actually written, so a
@@ -457,6 +564,17 @@ def verify(source, dest, source_state, out_size, note, use_exiftool, grain="unkn
             shortfalls.append("Software not written")
         if not exiftool_read(dest, ["HistorySoftwareAgent"]).get("HistorySoftwareAgent"):
             shortfalls.append("no XMP-xmpMM:History event was recorded")
+        thumb = exiftool_read(dest, ["ThumbnailImage"]).get("ThumbnailImage")
+        if thumb:
+            problems.append(
+                "the output still carries the source's embedded thumbnail, which shows "
+                "pre-restoration pixels in some viewers"
+            )
+        src_comment = source_state.get("UserComment")
+        if src_comment and str(src_comment).strip():
+            now = out.get("UserComment") or ""
+            if str(src_comment).strip() not in now:
+                problems.append("the source's UserComment was replaced, not appended to")
         if grain == "reconstructed" and GRAIN_DISCLOSURE not in (out.get("UserComment") or ""):
             problems.append(
                 "grain was reconstructed but the output does not disclose it; "
@@ -557,6 +675,18 @@ def main():
     if a.source.resolve() == a.render.resolve():
         die("Source and render are the same file; the original is read-only evidence.")
 
+    # A bad --project must not be discovered after the output has been published:
+    # that turns a successful write into exit 1, which means "verification failed".
+    if a.project:
+        if not a.project.is_dir():
+            die(f"--project {a.project} is not a directory")
+        manifest = a.project / "manifest.json"
+        if manifest.exists():
+            try:
+                json.loads(manifest.read_text())
+            except (ValueError, OSError) as exc:
+                die(f"--project manifest is unreadable: {exc}")
+
     use_exiftool = have("exiftool")
     target_format = choose_format(a.source, a.format)
     ext = FORMAT_EXT[target_format]
@@ -601,15 +731,19 @@ def main():
                            when, a.note, a.grain)
     keywords = [] if a.no_keywords else merge_keywords(["upscaled", TOOL], a.keyword or [])
 
-    out_dir = a.out_dir or a.source.parent
-    out_path = pick_destination(out_dir, a.source.stem, a.suffix, ext, a.force)
+    out_dir = a.out_dir or (a.project / "output" if a.project else a.source.parent)
+    out_path = None  # reserved below, after the dry-run can run without side effects
 
-    # The original is evidence. Nothing in this run may resolve to it.
-    if out_path.resolve() in (a.source.resolve(), a.render.resolve()):
-        die(
-            f"Output path {out_path} is the {'source' if out_path.resolve() == a.source.resolve() else 'render'} "
-            "file itself. Choose a suffix or a different --out-dir."
-        )
+    # The original is evidence. Refuse before reserving, so this cannot turn into
+    # a silent "-2" that writes next to a source we were about to clobber.
+    would_be = out_dir / f"{a.source.stem}{a.suffix}{ext}"
+    for candidate in (would_be,) + tuple(
+        out_dir / f"{a.source.stem}{a.suffix}-{n}{ext}" for n in range(2, 5)
+    ):
+        if candidate.resolve() in (a.source.resolve(), a.render.resolve()):
+            which = "source" if candidate.resolve() == a.source.resolve() else "render"
+            die(f"Output path {candidate} is the {which} file itself. "
+                "Choose a suffix or a different --out-dir.")
 
     plan = {
         "source": str(a.source),
@@ -627,26 +761,33 @@ def main():
         "exiftool": use_exiftool,
     }
     if a.dry_run:
+        planned = out_dir / f"{a.source.stem}{a.suffix}{ext}"
+        plan["output"] = str(planned)
         print(json.dumps(plan, indent=2) if a.json else "\n".join(f"{k}: {v}" for k, v in plan.items()))
         return 0
 
     out_dir.mkdir(parents=True, exist_ok=True)
+    out_path = reserve_destination(out_dir, a.source.stem, a.suffix, ext, a.force)
+    plan["output"] = str(out_path)
     workdir = Path(tempfile.mkdtemp(prefix="finalize-"))
     try:
         # Without exiftool there is no way to merge tags, so the source's EXIF is
         # embedded during the single save instead. One encode, never read-then-
         # rewrite the same path.
-        embed = None if use_exiftool else source_embed(a.source)
+        embed, embed_notes = (None, []) if use_exiftool else source_embed(
+            a.source, a.render, render_display
+        )
         transcode = render_orientation not in ("1", "0")
         staged, transcoded, encode_note = encode(
             a.render, target_format, workdir, a.quality, embed=embed, transcode=transcode
         )
-        shutil.move(str(staged), out_path)
+        os.replace(staged, out_path)
 
         write_problems = []
         copy_warn = ""
+        sidecar_used = False
         if use_exiftool:
-            copy_ok, copy_warn = copy_metadata(a.source, out_path)
+            copy_ok, copy_warn, sidecar_used = copy_metadata(a.source, out_path)
             if not copy_ok:
                 write_problems.append("exiftool could not copy metadata from the source")
             correct_ok, correct_warn = correct_metadata(
@@ -658,7 +799,8 @@ def main():
             copy_warn = "\n".join(w for w in (copy_warn, correct_warn) if w)
 
         status, report = verify(a.source, out_path, src_state, render_display, note,
-                                use_exiftool, a.grain)
+                                use_exiftool, a.grain, target_format)
+        report["shortfalls"].extend(embed_notes)
         if write_problems:
             report["problems"].extend(write_problems)
             status = "fail"
@@ -689,6 +831,7 @@ def main():
             "encode_detail": encode_note,
             "scale": round(scale, 3),
             "suffix": a.suffix,
+            "sidecar_used": sidecar_used,
             "operations": [
                 "metadata:copied" if use_exiftool else "metadata:degraded",
                 f"provenance:{'written' if use_exiftool else 'not-written'}",

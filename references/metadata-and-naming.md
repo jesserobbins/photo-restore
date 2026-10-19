@@ -25,8 +25,8 @@ owner's words.
 | `ExifImageWidth`, `ExifImageHeight` | Set to actual output pixels | Half-copied metadata that states the old dimensions is worse than no metadata, because it lies confidently. |
 | `Software`, `XMP:CreatorTool` | Set to tool and version | |
 | `XMP-xmpMM:History` | Append one event | The structured, machine-readable record. Read by Lightroom, Bridge, Photoshop. |
-| `EXIF:UserComment` | Set to the provenance sentence | Where most viewers show a note. |
-| `ThumbnailImage`, `PreviewImage` | Confirm absent | `-all:all` does not carry them; verify rather than assume. |
+| `EXIF:UserComment` | **Append** the provenance sentence | A source comment is the owner's words too, so it is appended to, not replaced. |
+| `ThumbnailImage`, `PreviewImage` | **Cleared** | `-all:all -unsafe` can carry the source's embedded thumbnail, which is a pre-restoration image that Finder and some DAMs display instead of the real pixels. Cleared explicitly and verified absent. |
 
 ## Provenance: when and where the upscale happened
 
@@ -102,7 +102,10 @@ encoding loses everything; verifying before correcting measures the wrong thing.
 
 The check compares the output against the source and against its own pixels:
 
-- every core tag the source had is still present
+- every core tag the source had is still present, on both the exiftool and the
+  degraded path
+- the output container matches what was asked for, decided by contents rather
+  than by filename
 - `DateTimeOriginal` is byte-identical to the source
 - `Orientation` is horizontal
 - real pixel dimensions match what the run recorded, and `ExifImageWidth` agrees
@@ -110,7 +113,9 @@ The check compares the output against the source and against its own pixels:
 - aspect ratio did not drift
 - the provenance note is present
 - the original caption is still a substring of the new caption
+- the source's `UserComment` is still a substring of the new one
 - no source keyword was dropped
+- no embedded thumbnail or preview survives
 
 | Result | Meaning | What to do |
 | --- | --- | --- |

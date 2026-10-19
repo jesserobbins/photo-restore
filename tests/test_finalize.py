@@ -275,3 +275,116 @@ def test_rotated_render_is_baked_and_normalised(tmp_path):
     got = subprocess.run(["exiftool", "-q", "-s3", "-Orientation#", str(out)],
                          capture_output=True, text=True).stdout.strip()
     assert got == "1"
+
+
+# --------------------------------------------------------------------------- #
+# iteration 2 regressions
+# --------------------------------------------------------------------------- #
+
+@pytestmark_needs_pillow
+def test_nonexistent_project_exits_2_before_writing(tmp_path):
+    src = make_jpeg(tmp_path / "s.jpg")
+    render = make_jpeg(tmp_path / "r.jpg", size=(120, 90), tags=False)
+    r = run_cli(src, render, "--project", tmp_path / "typo")
+    assert r.returncode == 2, r.stdout + r.stderr
+    assert not (tmp_path / "s_upscale.jpg").exists()
+    assert "Traceback" not in r.stderr
+
+
+@pytestmark_needs_pillow
+def test_project_defaults_out_dir_to_output(tmp_path):
+    src = make_jpeg(tmp_path / "s.jpg")
+    render = make_jpeg(tmp_path / "r.jpg", size=(120, 90), tags=False)
+    proj = tmp_path / "p"
+    for sub in ("source", "output"):
+        (proj / sub).mkdir(parents=True)
+    shutil.copy2(src, proj / "source" / "s.jpg")
+    r = run_cli(proj / "source" / "s.jpg", render, "--project", proj)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert (proj / "output" / "s_upscale.jpg").exists()
+    assert not (proj / "source" / "s_upscale.jpg").exists(), "source/ must stay read-only"
+
+
+@pytestmark_needs_pillow
+def test_32bit_render_is_refused_not_clipped(tmp_path):
+    src = make_jpeg(tmp_path / "s.jpg")
+    render = tmp_path / "r.tif"
+    Image.new("F", (120, 90), 0.5).save(render, format="TIFF")
+    r = run_cli(src, render)
+    assert r.returncode == 2
+    assert "32-bit" in r.stderr
+
+
+@pytestmark_needs_pillow
+def test_png_bytes_named_jpg_are_reencoded_to_jpeg(tmp_path):
+    """An extension is a claim; the byte-copy shortcut must read the contents."""
+    src = make_jpeg(tmp_path / "s.jpg")
+    liar = tmp_path / "r.jpg"
+    Image.new("RGB", (120, 90), (10, 20, 30)).save(liar, format="PNG")
+    r = run_cli(src, liar)
+    assert r.returncode == 0, r.stdout + r.stderr
+    with Image.open(tmp_path / "s_upscale.jpg") as im:
+        assert im.format == "JPEG"
+
+
+@pytestmark_needs_pillow
+def test_source_usercomment_is_appended_not_replaced(tmp_path):
+    src = make_jpeg(tmp_path / "s.jpg")
+    subprocess.run(["exiftool", "-q", "-overwrite_original",
+                    "-UserComment=Scanner note from 2004", str(src)], check=True)
+    render = make_jpeg(tmp_path / "r.jpg", size=(120, 90), tags=False)
+    r = run_cli(src, render)
+    assert r.returncode == 0, r.stdout + r.stderr
+    got = subprocess.run(["exiftool", "-q", "-s3", "-UserComment",
+                          str(tmp_path / "s_upscale.jpg")],
+                         capture_output=True, text=True).stdout
+    assert "Scanner note from 2004" in got
+    assert "Upscaled 2.0x" in got
+
+
+@pytestmark_needs_pillow
+def test_embedded_thumbnail_is_cleared(tmp_path):
+    src = make_jpeg(tmp_path / "s.jpg")
+    # exiftool will build a thumbnail from the image if asked to embed one.
+    subprocess.run(["exiftool", "-q", "-overwrite_original",
+                    "-ThumbnailImage<=s.jpg", str(src)],
+                   cwd=tmp_path, capture_output=True)
+    render = make_jpeg(tmp_path / "r.jpg", size=(120, 90), tags=False)
+    r = run_cli(src, render)
+    assert r.returncode == 0, r.stdout + r.stderr
+    thumb = subprocess.run(["exiftool", "-q", "-s3", "-ThumbnailImage",
+                            str(tmp_path / "s_upscale.jpg")],
+                           capture_output=True, text=True).stdout.strip()
+    assert thumb == "", "the pre-restoration thumbnail must not survive"
+
+
+@pytestmark_needs_pillow
+def test_xmp_sidecar_metadata_is_merged(tmp_path):
+    src = make_jpeg(tmp_path / "s.jpg")
+    render = make_jpeg(tmp_path / "r.jpg", size=(120, 90), tags=False)
+    sidecar = tmp_path / "s.jpg.xmp"
+    subprocess.run(["exiftool", "-q", "-o", str(sidecar),
+                    "-Description=Caption that lives only in the sidecar",
+                    "-Subject=sidecar-only", str(src)], check=True)
+    r = run_cli(src, render)
+    assert r.returncode == 0, r.stdout + r.stderr
+    got = subprocess.run(["exiftool", "-q", "-s3", "-XMP:Subject", "-Description",
+                          str(tmp_path / "s_upscale.jpg")],
+                         capture_output=True, text=True).stdout
+    # A sidecar is XMP, so its keywords land in XMP-dc:Subject rather than IPTC
+    # Keywords. Nothing is lost, but the tag is different and worth pinning.
+    assert "sidecar-only" in got, got
+    assert "Caption that lives only in the sidecar" in got, got
+
+
+@pytestmark_needs_pillow
+def test_concurrent_runs_cannot_take_the_same_destination(tmp_path):
+    src = make_jpeg(tmp_path / "s.jpg")
+    render = make_jpeg(tmp_path / "r.jpg", size=(120, 90), tags=False)
+    procs = [subprocess.Popen([sys.executable, str(SCRIPT), str(src), str(render)],
+                              stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+             for _ in range(4)]
+    for p in procs:
+        p.communicate()
+    produced = sorted(p.name for p in tmp_path.glob("s_upscale*.jpg"))
+    assert len(produced) == len(set(produced)), produced

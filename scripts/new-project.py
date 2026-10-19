@@ -42,17 +42,18 @@ Restoration project scaffolded {date} by photo-upscale-enhance.
 - `refs/body/` -- silhouette and proportion references. These constrain
   *shape*, never posture or clothing.
 - `output/` -- results, named `<source-stem>_upscale.<ext>`.
-- `qa/` -- comparison sheets from `scripts/compare.py`.
+- `qa/` -- comparison sheets from the skill's `compare.py`.
 - `manifest.json` -- what was done to each asset, written by `finalize.py`.
 
 ## Workflow
 
 1. Put the target in `source/` and any references in `refs/face/` or `refs/body/`.
 2. Restore, writing the raw render somewhere temporary.
-3. Finalize it:
+3. Finalize it, running the skill's `finalize.py` from wherever the skill lives
+   and pointing `--out-dir` at `output/` so nothing is written into `source/`:
 
-    python scripts/finalize.py source/IMG_1234.jpg render.png \\
-      --project . --suffix _upscale
+    python <skill>/scripts/finalize.py source/IMG_1234.jpg render.png \\
+      --project . --out-dir output --suffix _upscale
 
 4. Check the fidelity checklist, then deliver.
 

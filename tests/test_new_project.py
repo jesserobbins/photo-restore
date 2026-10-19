@@ -155,7 +155,8 @@ def test_differing_sidecar_is_refused_not_overwritten(tmp_path):
     assert r.returncode == 0, r.stderr
     assert (proj / "source" / "img.jpg.xmp").read_text().endswith("first</x:xmpmeta>")
 
-    other = make_image(tmp_path / "b" / "img.jpg", (200, 200, 200))
+    # Same bytes, different sidecar: this is the case only _place_sidecar can catch.
+    other = make_image(tmp_path / "b" / "img.jpg")
     (tmp_path / "b" / "img.jpg.xmp").write_text("<x:xmpmeta>second</x:xmpmeta>")
     r = run_cli(proj, "--force", "--source", other)
     assert r.returncode != 0

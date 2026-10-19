@@ -684,6 +684,9 @@ def test_gray_profile_dropped_when_alpha_forces_rgb(tmp_path):
         capture_output=True, text=True).stdout.strip()
     assert carried.upper() not in ("GRAY", "GREY"), \
         f"grayscale profile on RGB pixels: {carried}"
+    assert entry["verification"] == "degraded", "a dropped profile must not read as pass"
+    assert any("ICC" in s for s in entry["verification_detail"]["shortfalls"]), \
+        f"the dropped profile was not named: {entry['verification_detail']}"
 
 
 @pytestmark_needs_pillow
@@ -786,8 +789,8 @@ def test_no_exiftool_does_not_inherit_the_render_date(tmp_path):
 
 
 @pytestmark_needs_pillow
-def test_png_transcode_does_not_inherit_render_exif(tmp_path):
-    """Pillow's PNG writer reads EXIF out of im.info, so a transcode can smuggle it."""
+def test_png_transcode_does_not_inherit_render_tags(tmp_path):
+    """A transcode must carry the source's record, not the render's."""
     src = make_jpeg(tmp_path / "s.jpg", tags=False)          # undated source
     render = make_jpeg(tmp_path / "r.jpg", size=(120, 90), tags=True)
     r = run_cli(src, render, "--format", "png")

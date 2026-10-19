@@ -340,10 +340,6 @@ def choose_format(source, requested):
     return "jpeg"
 
 
-RGB_FAMILY = {"RGB", "RGBA", "P", "PA"}
-GRAY_FAMILY = {"L", "LA", "La"}
-
-
 # Modes that JPEG flattens into RGB, invalidating a grayscale or press profile.
 # "1" is bilevel: encode() converts it to RGB, where a gray profile no longer fits.
 JPEG_BREAKS_PROFILE = {"CMYK", "YCCK", "LAB", "HSV", "LA", "La", "1"}
@@ -531,14 +527,14 @@ def encode(render, target_format, workdir, quality, embed=None, transcode=False)
                     "--format tiff, or provide an 8-bit render; mapping it to JPEG "
                     "would have to guess a black point."
                 )
-        # Pillow's PNG and TIFF writers read EXIF and ICC out of im.info, so a
-        # transcode can carry the render's tags even though nothing was passed.
-        # Clear each one unless this run is deliberately supplying it: an embed
-        # holding only an ICC profile is still no reason to keep the render's EXIF.
-        if "exif" not in save_kw:
-            im.info.pop("exif", None)
+        # Pillow's PNG and TIFF writers fall back to im.info for ICC_Profile (not
+        # for EXIF, which only arrives through save() arguments). Clearing it keeps
+        # the render's colour description from riding along unchosen, and an embed
+        # holding only an ICC profile is still no reason to inherit anything else.
         if "icc_profile" not in save_kw:
             im.info.pop("icc_profile", None)
+        if "exif" not in save_kw:
+            im.info.pop("exif", None)
         if target_format == "jpeg":
             if im.mode in ("RGBA", "LA", "P"):
                 base = Image.new("RGB", im.size, (255, 255, 255))

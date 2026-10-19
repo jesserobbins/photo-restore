@@ -34,6 +34,13 @@ import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
+from PIL import Image as _PILImage
+
+# A 4x upscale of a 600 dpi 8x10 scan is ~460 MP, well past Pillow's ~179 MP
+# decompression-bomb limit. These are the owner's own files, opened deliberately,
+# so the guard is off. Failures still surface as decode errors.
+_PILImage.MAX_IMAGE_PIXELS = None
+
 VERSION = "2.0"
 TOOL = "photo-restore"
 PROG = f"{TOOL} {VERSION}"
@@ -108,6 +115,13 @@ def image_size(path):
         proc = run(["exiftool", "-q", "-q", "-s3", "-ImageWidth", "-ImageHeight", str(path)])
         vals = proc.stdout.split()
         if len(vals) >= 2 and all(v.isdigit() for v in vals[:2]):
+            return int(vals[0]), int(vals[1])
+    if have("magick"):
+        # The only fallback left for a HEIC on a host with neither exiftool nor
+        # sips, which is the case the ImageMagick decode path exists for.
+        proc = run(["magick", "identify", "-format", "%w %h", str(path)])
+        vals = proc.stdout.split()
+        if proc.returncode == 0 and len(vals) >= 2 and all(v.isdigit() for v in vals[:2]):
             return int(vals[0]), int(vals[1])
     if have("sips"):
         proc = run(["sips", "-g", "pixelWidth", "-g", "pixelHeight", str(path)])
@@ -407,10 +421,10 @@ def source_embed(source, render, out_size):
         if render_icc:
             embed["icc_profile"] = render_icc
         elif source_icc:
-            embed["icc_profile"] = source_icc
             notes.append(
-                "source ICC profile attached to render pixels that carry no profile "
-                "of their own; colour may be mislabelled"
+                "the source ICC profile was not carried: the output holds the render's "
+                "pixels and the render has no profile, so the source profile would "
+                "have mislabelled them"
             )
     except Exception as exc:
         notes.append(f"could not build an embedded metadata blob: {exc}")
@@ -443,7 +457,9 @@ def encode(render, target_format, workdir, quality, embed=None, transcode=False)
             )
 
     save_kw = dict(embed or {})
-    colour_model_preserved = False
+    # Only a colour-model conversion invalidates the render's ICC profile. Dropping
+    # alpha does not, and PNG/TIFF keep whatever mode they were given.
+    colour_model_preserved = True
     with Image.open(staged) as im:
         # Baking the transform here is why the orientation tag can be normalised
         # afterwards: after this point the pixels are upright.
@@ -460,7 +476,7 @@ def encode(render, target_format, workdir, quality, embed=None, transcode=False)
                     "would have to guess a black point."
                 )
         if target_format == "jpeg":
-            colour_model_preserved = im.mode in ("RGB", "L")
+            colour_model_preserved = im.mode not in ("CMYK", "YCCK", "LAB", "HSV")
             if im.mode in ("RGBA", "LA", "P"):
                 base = Image.new("RGB", im.size, (255, 255, 255))
                 rgba = im.convert("RGBA")
@@ -483,7 +499,7 @@ def encode(render, target_format, workdir, quality, embed=None, transcode=False)
     return out, True, detail, colour_model_preserved
 
 
-def copy_metadata(source, dest, render, colour_model_preserved=True):
+def copy_metadata(source, dest, render, colour_model_preserved=True, reencoded=True):
     """Pass 1: copy everything the source knows, including an XMP sidecar.
 
     `osxphotos export --sidecar xmp` puts metadata next to the file rather than in
@@ -499,12 +515,29 @@ def copy_metadata(source, dest, render, colour_model_preserved=True):
     render_has_icc = bool(
         exiftool_read(render, ["ICC_Profile:ProfileDescription"]).get("ICC_Profile:ProfileDescription")
     )
+    icc_note = None
     if render_has_icc and colour_model_preserved:
         ok_icc, warn_icc = exiftool_write(
             dest, ["-TagsFromFile", str(render), "-ICC_Profile:all"]
         )
         ok = ok and ok_icc
         warn = "\n".join(w for w in (warn, warn_icc) if w)
+    else:
+        # The output carries the *render's* pixels, so the source's profile never
+        # describes them -- not even on a byte-copy, which copies render bytes.
+        # Leaving it on labels the file confidently and wrongly; dropping it lets
+        # the viewer assume sRGB, which is a default rather than a false claim.
+        source_has_icc = bool(
+            exiftool_read(source, ["ICC_Profile:ProfileDescription"])
+            .get("ICC_Profile:ProfileDescription")
+        )
+        if source_has_icc:
+            exiftool_write(dest, ["-ICC_Profile:all="])
+            icc_note = (
+                "the source ICC profile was not carried: the output holds the render's "
+                "pixels, which have no profile of their own, so the source profile "
+                "would have mislabelled them"
+            )
 
     sidecar = source.with_name(source.name + ".xmp")
     used = False
@@ -535,7 +568,7 @@ def copy_metadata(source, dest, render, colour_model_preserved=True):
         ok = ok and ok2
         warn = "\n".join(w for w in (warn, warn2) if w)
         used = True
-    return ok, warn, used
+    return ok, warn, used, icc_note
 
 
 def correct_metadata(dest, out_size, note, keywords, appearance=True):
@@ -813,7 +846,10 @@ def main():
     if src_size is None:
         die(f"Could not read dimensions of {a.source}")
     src_state = read_state(a.source) if use_exiftool else read_state_pillow(a.source)
-    src_orientation = src_state.get("Orientation#") or "1"
+    # image_orientation() falls back to magick/sips, which is how a HEIC source
+    # gets a real orientation on a host without exiftool.
+    src_orientation = (src_state.get("Orientation#")
+                       or image_orientation(a.source) or "1")
     src_display = transposed_size(src_size, src_orientation)
 
     render_raw = image_size(a.render)
@@ -903,18 +939,27 @@ def main():
             a.source, a.render, render_display
         )
         transcode = render_orientation not in ("1", "0")
-        staged, transcoded, encode_note, colour_ok = encode(
-            a.render, target_format, workdir, a.quality, embed=embed, transcode=transcode
-        )
+        try:
+            staged, transcoded, encode_note, colour_ok = encode(
+                a.render, target_format, workdir, a.quality, embed=embed, transcode=transcode
+            )
+        except SystemExit:
+            raise
+        except Exception as exc:
+            # Nothing has been published, so this is exit 2 by contract, not the
+            # quarantined-output exit 1.
+            die(f"could not write the output as {target_format}: {exc}")
         os.replace(staged, out_path)
         published = True
 
         write_problems = []
         copy_warn = ""
+        icc_warning = None
         sidecar_used = False
         if use_exiftool:
-            copy_ok, copy_warn, sidecar_used = copy_metadata(
-                a.source, out_path, a.render, colour_model_preserved=colour_ok
+            copy_ok, copy_warn, sidecar_used, icc_warning = copy_metadata(
+                a.source, out_path, a.render,
+                colour_model_preserved=colour_ok, reencoded=transcoded,
             )
             if not copy_ok:
                 write_problems.append("exiftool could not copy metadata from the source")
@@ -929,6 +974,8 @@ def main():
         status, report = verify(a.source, out_path, src_state, render_display, note,
                                 use_exiftool, a.grain, target_format)
         report["shortfalls"].extend(embed_notes)
+        if icc_warning:
+            report["shortfalls"].append(icc_warning)
         if write_problems:
             report["problems"].extend(write_problems)
             status = "fail"
@@ -980,8 +1027,16 @@ def main():
             "verification_detail": report,
             "finalized_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         }
+        manifest_error = None
         if a.project:
-            append_manifest(a.project, entry)
+            try:
+                append_manifest(a.project, entry)
+            except Exception as exc:
+                # The output is published and verified. Bookkeeping failing is not
+                # a verification failure, and exit 1 would tell a caller to discard
+                # a good file.
+                manifest_error = str(exc)
+                entry["manifest_error"] = manifest_error
 
         if a.json:
             print(json.dumps(entry, indent=2, default=str))
@@ -998,6 +1053,8 @@ def main():
                 print(f"  DEGRADED: {s}")
             for w in report.get("exiftool_warnings", []):
                 print(f"  exiftool: {w}")
+            if manifest_error:
+                print(f"  WARNING: verified, but the manifest was not updated: {manifest_error}")
             if status == "fail":
                 print("\nDo not deliver this file and do not import it into Photos.")
             elif status == "degraded":

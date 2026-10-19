@@ -136,6 +136,11 @@ def copy_in(files, dest, project, rename=None, role="file"):
             raise SystemExit(f"Not found: {f}")
         name = f"{f.stem}{rename}{f.suffix}" if rename else f.name
         target = dest / name
+        # The sidecar travels with the image whether or not the image is new.
+        sidecar = f.with_name(f.name + ".xmp")
+        sidecar_dest = dest / (name + ".xmp")
+        if sidecar.exists() and not sidecar_dest.exists():
+            shutil.copy2(sidecar, sidecar_dest)
         if target.exists():
             # Re-running with the same arguments must be idempotent; only a
             # *different* file under the same name is a problem.
@@ -154,11 +159,6 @@ def copy_in(files, dest, project, rename=None, role="file"):
             continue
         if not target.exists():
             shutil.copy2(f, target)
-            # A sidecar carries metadata that exists nowhere else. Copying the
-            # image alone loses the caption and keywords the restore should keep.
-            sidecar = f.with_name(f.name + ".xmp")
-            if sidecar.exists():
-                shutil.copy2(sidecar, dest / (name + ".xmp"))
         placed.append(str(target.relative_to(project)))
     return placed
 
@@ -214,7 +214,9 @@ def main():
     write_manifest(root, manifest_path, data)
 
     readme = root / "README.md"
-    if not readme.exists() or a.force:
+    if not readme.exists():
+        # --force means "add to this project", not "discard my notes". A generated
+        # README may have been edited into a working document.
         readme.write_text(
             README.format(name=name, date=datetime.now().strftime("%Y-%m-%d"))
         )

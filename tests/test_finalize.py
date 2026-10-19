@@ -508,17 +508,25 @@ def test_cross_filesystem_output_does_not_strand_an_empty_file(tmp_path):
 def test_keyword_containing_a_comma_survives(tmp_path):
     """'Washington, D.C.' is one keyword; comma-joining then splitting breaks it."""
     src = make_jpeg(tmp_path / "s.jpg")
-    subprocess.run(["exiftool", "-q", "-overwrite_original",
-                    "-Keywords=Washington, D.C.", "-Subject=Smith, John",
-                    str(src)], check=True)
+    # -sep keeps the comma inside one value; without it exiftool splits on write
+    # and the test would pass against a format that already lost the keyword.
+    subprocess.run(["exiftool", "-q", "-overwrite_original", "-sep", "|",
+                    "-Keywords=Washington, D.C.|family",
+                    "-Subject=Smith, John|portrait", str(src)], check=True)
     render = make_jpeg(tmp_path / "r.jpg", size=(120, 90), tags=False)
     r = run_cli(src, render)
     assert r.returncode == 0, r.stdout + r.stderr
 
-    kw = subprocess.run(["exiftool", "-q", "-s3", "-Keywords",
-                         str(tmp_path / "s_upscale.jpg")],
-                        capture_output=True, text=True).stdout
-    assert "Washington, D.C." in kw, kw
+    import json as _json
+    # -s3 joins list items with ", ", which cannot distinguish one keyword from
+    # two. The JSON list is the only reading that can fail.
+    got = _json.loads(subprocess.run(
+        ["exiftool", "-q", "-q", "-json", "-Keywords", "-Subject",
+         str(tmp_path / "s_upscale.jpg")],
+        capture_output=True, text=True).stdout)[0]
+    assert "Washington, D.C." in got["Keywords"], got["Keywords"]
+    assert "Smith, John" in got["Subject"], got["Subject"]
+    assert "D.C." not in got["Keywords"], "the keyword was split on its comma"
 
 
 @pytestmark_needs_pillow
@@ -565,3 +573,38 @@ def test_grain_disclosed_reflects_the_file_not_the_plan(tmp_path):
     assert entry["verification"] == "degraded"
     assert entry["grain_disclosed"] is False, \
         "no provenance was written, so no disclosure was made"
+
+
+@pytestmark_needs_pillow
+def test_source_profile_is_not_attached_to_a_profileless_render(tmp_path):
+    """The output holds the render's pixels, so the source profile never fits."""
+    profiles = sorted(Path("/System/Library/ColorSync/Profiles").glob("*.icc"))
+    if not profiles:
+        pytest.skip("no system ICC profiles")
+    src = make_jpeg(tmp_path / "s.jpg")
+    subprocess.run(["exiftool", "-q", "-overwrite_original",
+                    f"-ICC_Profile<={profiles[0]}", str(src)], check=True)
+    render = make_jpeg(tmp_path / "r.jpg", size=(120, 90), tags=False)
+    subprocess.run(["exiftool", "-q", "-overwrite_original",
+                    "-ICC_Profile:all=", str(render)], check=True)
+
+    r = run_cli(src, render, "--json")
+    assert r.returncode == 0, r.stdout + r.stderr
+    entry = json.loads(r.stdout)
+
+    carried = subprocess.run(
+        ["exiftool", "-q", "-s3", "-ICC_Profile:ProfileDescription", entry["output"]],
+        capture_output=True, text=True).stdout.strip()
+    assert carried == "", f"source profile mislabels render pixels: {carried}"
+    assert any("ICC" in s for s in entry["verification_detail"]["shortfalls"]), \
+        "the missing profile must be reported, not silently dropped"
+
+
+@pytestmark_needs_pillow
+def test_large_image_is_not_blocked_by_the_bomb_guard(tmp_path):
+    """A 4x upscale of a 600dpi 8x10 scan exceeds Pillow's default limit."""
+    src = make_jpeg(tmp_path / "s.jpg", size=(60, 45))
+    render = make_jpeg(tmp_path / "r.jpg", size=(120, 90), tags=False)
+    # Confirm the guard is off rather than generating a 460 MP file.
+    from PIL import Image as PILImage
+    assert PILImage.MAX_IMAGE_PIXELS is None

@@ -148,14 +148,24 @@ Working two-pass recipe:
 ```sh
 # 1. copy everything
 exiftool -overwrite_original -TagsFromFile "$SRC" -all:all -unsafe "$DST"
-# 2. correct what the upscale made false, and record provenance
-exiftool -overwrite_original -Orientation#=1 \
+
+# 2. append to the owner's words, never replace them. UserComment included:
+#    a scanner note or a previous editor's remark is someone else's record.
+EXISTING=$(exiftool -q -s3 -UserComment "$DST")
+if [ -n "$EXISTING" ]; then NOTE="$EXISTING $NOTE"; fi
+
+# 3. correct what the upscale made false, and record provenance
+exiftool -overwrite_original -Orientation#=1 -XMP-tiff:Orientation#=1 \
   -ExifImageWidth="$W" -ExifImageHeight="$H" \
+  -ThumbnailImage= -PreviewImage= \
   -Software="photo-upscale-enhance 2.0" \
   -UserComment="$NOTE" \
   "-XMP-xmpMM:History+={Action=saved,SoftwareAgent=photo-upscale-enhance 2.0,When=$NOW}" \
   "$DST"
 ```
+
+`XMP-tiff:Orientation` is corrected alongside the EXIF tag because `-all:all`
+copies it too, and readers that prefer XMP will otherwise rotate upright pixels.
 
 ## When there are no scripts
 

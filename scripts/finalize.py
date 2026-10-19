@@ -282,21 +282,10 @@ def container_matches(path, target_format):
     return detected_format(path) == expect
 
 
-def pick_destination(out_dir, stem, suffix, ext, force):
-    """Never silently overwrite. Numbered variants beat destroying a prior result."""
-    base = f"{stem}{suffix}"
-    candidate = out_dir / f"{base}{ext}"
-    if not candidate.exists() or force:
-        return candidate
-    n = 2
-    while True:
-        candidate = out_dir / f"{base}-{n}{ext}"
-        if not candidate.exists() or force:
-            return candidate
-        n += 1
-
-
 def reserve_destination(out_dir, stem, suffix, ext, force):
+    """Returns (path, created). `created` says whether this run made the file, so
+    a failure can remove its own empty reservation without touching an existing
+    --force target."""
     """Claim the output path atomically, so two runs cannot pick the same name.
 
     The manifest lock never protected output allocation: both runs could see the
@@ -307,14 +296,15 @@ def reserve_destination(out_dir, stem, suffix, ext, force):
     for n in range(1, 1000):
         candidate = out_dir / (f"{base}{ext}" if n == 1 else f"{base}-{n}{ext}")
         if force and n == 1:
+            created = not candidate.exists()
             candidate.touch(exist_ok=True)
-            return candidate
+            return candidate, created
         try:
             fd = os.open(candidate, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
         except FileExistsError:
             continue
         os.close(fd)
-        return candidate
+        return candidate, True
     die(f"could not find a free output name for {base}{ext}")
 
 
@@ -405,17 +395,17 @@ def encode(render, target_format, workdir, quality, embed=None, transcode=False)
         # Baking the transform here is why the orientation tag can be normalised
         # afterwards: after this point the pixels are upright.
         im = ImageOps.exif_transpose(im)
-        if im.mode.startswith("I;16"):
-            # A 16-bit grayscale render must be rescaled, not clipped. Losing the
-            # tonal range would report as a pass because verify only measures
-            # dimensions and metadata.
-            im = im.convert("I").point(lambda v: v / 256.0).convert("L")
-        elif im.mode in ("I", "F"):
-            die(
-                f"the render is 32-bit {im.mode} data, which cannot be mapped to "
-                "8-bit output without guessing a black point. Use --format png or "
-                "--format tiff to keep the depth."
-            )
+        if target_format == "jpeg" and (im.mode.startswith("I;16") or im.mode in ("I", "F")):
+            # JPEG has no depth to keep, so 16-bit is rescaled rather than clipped,
+            # and 32-bit is refused because any mapping would guess a black point.
+            if im.mode.startswith("I;16"):
+                im = im.convert("I").point(lambda v: v / 256.0).convert("L")
+            else:
+                die(
+                    f"the render is 32-bit {im.mode} data. Keep it with "
+                    "--format tiff, or provide an 8-bit render; mapping it to JPEG "
+                    "would have to guess a black point."
+                )
         if target_format == "jpeg":
             if im.mode in ("RGBA", "LA", "P"):
                 base = Image.new("RGB", im.size, (255, 255, 255))
@@ -439,7 +429,7 @@ def encode(render, target_format, workdir, quality, embed=None, transcode=False)
     return out, True, detail
 
 
-def copy_metadata(source, dest):
+def copy_metadata(source, dest, render):
     """Pass 1: copy everything the source knows, including an XMP sidecar.
 
     `osxphotos export --sidecar xmp` puts metadata next to the file rather than in
@@ -447,12 +437,34 @@ def copy_metadata(source, dest):
     nowhere else, and verification cannot see the loss.
     """
     ok, warn = exiftool_write(dest, ["-TagsFromFile", str(source), "-all:all", "-unsafe"])
+
+    # The render's own ICC profile describes the render's pixels. Copying the
+    # source's over it would relabel the colour space without converting it.
+    render_icc = None
+    from PIL import Image
+    with Image.open(render) as rnd:
+        render_icc = rnd.info.get("icc_profile")
+    if render_icc:
+        ok_icc, warn_icc = exiftool_write(
+            dest, ["-TagsFromFile", str(render), "-ICC_Profile:all"]
+        )
+        ok = ok and ok_icc
+        warn = "\n".join(w for w in (warn, warn_icc) if w)
+
     sidecar = source.with_name(source.name + ".xmp")
     used = False
     if sidecar.exists():
+        # A sidecar replaces list tags wholesale, so keep what the image had and
+        # union it with the sidecar's values instead of letting one win.
+        before = parse_keywords(exiftool_read(dest, ["Subject"]).get("Subject"))
         ok2, warn2 = exiftool_write(
             dest, ["-TagsFromFile", str(sidecar), "-all:all", "-unsafe"]
         )
+        after = parse_keywords(exiftool_read(dest, ["Subject"]).get("Subject"))
+        merged = merge_keywords(before, after)
+        if merged and merged != after:
+            args = ["-Subject="] + [f"-Subject+={kw}" for kw in merged]
+            exiftool_write(dest, args)
         ok = ok and ok2
         warn = "\n".join(w for w in (warn, warn2) if w)
         used = True
@@ -471,6 +483,9 @@ def correct_metadata(dest, out_size, note, keywords, appearance=True):
         "-PreviewImage=",
         # Numeric form is mandatory: -Orientation=1 is silently ignored.
         "-Orientation#=1",
+        # The XMP copy carries its own orientation, which XMP-preferring readers
+        # use. Leaving it stale rotates already-upright pixels.
+        "-XMP-tiff:Orientation#=1",
         f"-ExifImageWidth={out_size[0]}",
         f"-ExifImageHeight={out_size[1]}",
         f"-Software={PROG}",
@@ -522,6 +537,13 @@ def verify(source, dest, source_state, out_size, note, use_exiftool,
     orientation = out.get("Orientation#")
     if orientation not in (None, "1"):
         problems.append(f"Orientation is {out.get('Orientation')!r}, expected horizontal")
+    if use_exiftool:
+        xmp_orientation = exiftool_read(dest, ["XMP-tiff:Orientation"], numeric=True).get("XMP-tiff:Orientation")
+        if xmp_orientation not in (None, "", "1"):
+            problems.append(
+                f"XMP orientation is {xmp_orientation!r}; XMP-preferring readers "
+                "will show upright pixels rotated"
+            )
 
     real = image_size(dest)
     if real is None:
@@ -564,12 +586,12 @@ def verify(source, dest, source_state, out_size, note, use_exiftool,
             shortfalls.append("Software not written")
         if not exiftool_read(dest, ["HistorySoftwareAgent"]).get("HistorySoftwareAgent"):
             shortfalls.append("no XMP-xmpMM:History event was recorded")
-        thumb = exiftool_read(dest, ["ThumbnailImage"]).get("ThumbnailImage")
-        if thumb:
-            problems.append(
-                "the output still carries the source's embedded thumbnail, which shows "
-                "pre-restoration pixels in some viewers"
-            )
+        for stale in ("ThumbnailImage", "PreviewImage"):
+            if exiftool_read(dest, [stale]).get(stale):
+                problems.append(
+                    f"the output still carries {stale}, which shows pre-restoration "
+                    "pixels in some viewers"
+                )
         src_comment = source_state.get("UserComment")
         if src_comment and str(src_comment).strip():
             now = out.get("UserComment") or ""
@@ -589,12 +611,23 @@ def verify(source, dest, source_state, out_size, note, use_exiftool,
                 problems.append("captions: Caption-Abstract went missing")
             elif str(src_caption).strip() not in now:
                 problems.append("captions: original Caption-Abstract was replaced, not appended to")
-        src_kw = parse_keywords(source_state.get("Keywords"))
-        if src_kw:
-            now_kw = {k.lower() for k in parse_keywords(out.get("Keywords"))}
-            lost = [k for k in src_kw if k.lower() not in now_kw]
-            if lost:
-                problems.append(f"keywords lost: {', '.join(lost)}")
+        # Both vocabularies, because a macOS/Lightroom source may carry its words
+        # in XMP only, and the sidecar path makes that common.
+        for src_tag, out_tag, label in (
+            ("Keywords", "Keywords", "keywords"),
+            ("Subject", "Subject", "XMP subjects"),
+        ):
+            src_kw = parse_keywords(source_state.get(src_tag))
+            if src_kw:
+                now_kw = {k.lower() for k in parse_keywords(out.get(out_tag))}
+                lost = [k for k in src_kw if k.lower() not in now_kw]
+                if lost:
+                    problems.append(f"{label} lost: {', '.join(lost)}")
+        src_desc = source_state.get("Description")
+        if src_desc and str(src_desc).strip():
+            now_desc = out.get("Description") or ""
+            if str(src_desc).strip() not in now_desc:
+                problems.append("the source's XMP Description was replaced, not appended to")
 
     status = "fail" if problems else ("degraded" if shortfalls else "pass")
     return status, {"problems": problems, "shortfalls": shortfalls, "output": out}
@@ -767,9 +800,14 @@ def main():
         return 0
 
     out_dir.mkdir(parents=True, exist_ok=True)
-    out_path = reserve_destination(out_dir, a.source.stem, a.suffix, ext, a.force)
+    out_path, reserved_new = reserve_destination(
+        out_dir, a.source.stem, a.suffix, ext, a.force
+    )
     plan["output"] = str(out_path)
-    workdir = Path(tempfile.mkdtemp(prefix="finalize-"))
+    # Stage on the destination filesystem: os.replace cannot cross volumes, and an
+    # external or archival drive is exactly where these outputs go.
+    workdir = Path(tempfile.mkdtemp(dir=out_dir, prefix=".finalize-"))
+    published = False
     try:
         # Without exiftool there is no way to merge tags, so the source's EXIF is
         # embedded during the single save instead. One encode, never read-then-
@@ -782,12 +820,13 @@ def main():
             a.render, target_format, workdir, a.quality, embed=embed, transcode=transcode
         )
         os.replace(staged, out_path)
+        published = True
 
         write_problems = []
         copy_warn = ""
         sidecar_used = False
         if use_exiftool:
-            copy_ok, copy_warn, sidecar_used = copy_metadata(a.source, out_path)
+            copy_ok, copy_warn, sidecar_used = copy_metadata(a.source, out_path, a.render)
             if not copy_ok:
                 write_problems.append("exiftool could not copy metadata from the source")
             correct_ok, correct_warn = correct_metadata(
@@ -872,6 +911,10 @@ def main():
         return 1 if status == "fail" else 0
     finally:
         shutil.rmtree(workdir, ignore_errors=True)
+        if not published and reserved_new:
+            # An exit before publication must not leave a zero-byte file wearing a
+            # delivery name, or the next run is pushed to "-2" for no reason.
+            out_path.unlink(missing_ok=True)
 
 
 if __name__ == "__main__":

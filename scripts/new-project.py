@@ -23,8 +23,10 @@ A project is optional. For a single photo, call finalize.py with plain paths.
 
 import argparse
 import json
+import os
 import shutil
 import sys
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -80,6 +82,43 @@ def build_parser():
     return p
 
 
+def read_manifest(path):
+    if not path.exists():
+        return {}
+    return json.loads(path.read_text())
+
+
+def write_manifest(root, path, data):
+    """Merge under the same lock finalize.py uses.
+
+    Without the lock, a finalize run that appends an asset between this read and
+    this write would have its entry overwritten by the scaffolder's stale copy.
+    """
+    import fcntl
+
+    lock = root / ".manifest.lock"
+    with open(lock, "w") as lockfh:
+        fcntl.flock(lockfh, fcntl.LOCK_EX)
+        current = read_manifest(path)
+        if current:
+            # Recompute against what is on disk now, not what we read earlier.
+            data["assets"] = current.get("assets", data.get("assets", []))
+            data["sources"] = merge_list(current.get("sources"), data.get("sources"))
+            data["masters"] = merge_list(current.get("masters"), data.get("masters"))
+            prev_refs = current.get("references") or {}
+            for role in ("face", "body"):
+                data["references"][role] = merge_list(
+                    prev_refs.get(role), data["references"].get(role)
+                )
+            data["created"] = current.get("created") or data.get("created")
+        fd, tmp = tempfile.mkstemp(dir=root, prefix=".manifest-", suffix=".json")
+        with os.fdopen(fd, "w") as fh:
+            json.dump(data, fh, indent=2)
+            fh.write("\n")
+        os.replace(tmp, path)
+        fcntl.flock(lockfh, fcntl.LOCK_UN)
+
+
 def merge_list(old, new):
     out = list(old or [])
     for item in new:
@@ -105,6 +144,11 @@ def copy_in(files, dest, project, rename=None, role="file"):
             )
         if not target.exists():
             shutil.copy2(f, target)
+            # A sidecar carries metadata that exists nowhere else. Copying the
+            # image alone loses the caption and keywords the restore should keep.
+            sidecar = f.with_name(f.name + ".xmp")
+            if sidecar.exists():
+                shutil.copy2(sidecar, dest / (name + ".xmp"))
         placed.append(str(target.relative_to(project)))
     return placed
 
@@ -134,12 +178,7 @@ def main():
     placed_body = copy_in(a.body, root / "refs" / "body", root, role="body reference")
 
     manifest_path = root / "manifest.json"
-    previous = {}
-    if manifest_path.exists():
-        # Re-scaffolding must never erase the verification history finalize.py
-        # appended. Merge, keeping assets and the original created stamp.
-        with manifest_path.open() as fh:
-            previous = json.load(fh)
+    previous = read_manifest(manifest_path)
 
     data = {
         "schema": SCHEMA,
@@ -162,7 +201,7 @@ def main():
             "verification result.",
         ],
     }
-    manifest_path.write_text(json.dumps(data, indent=2) + "\n")
+    write_manifest(root, manifest_path, data)
 
     readme = root / "README.md"
     if not readme.exists() or a.force:

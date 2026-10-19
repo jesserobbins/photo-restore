@@ -152,21 +152,31 @@ def read_state_pillow(path):
     return state
 
 
-def provenance_note(scale, src_name, src_dims, out_dims, when, note):
+def provenance_note(scale, src_name, src_dims, out_dims, when, note, grain=None):
     if note:
-        return note
-    return (
-        f"Upscaled {scale:.1f}x ({src_dims[0]}x{src_dims[1]} to "
-        f"{out_dims[0]}x{out_dims[1]}) by {PROG}, conservative mode, "
-        f"on {when}. Source: {src_name}. Capture date unchanged."
-    )
+        base = note
+    else:
+        base = (
+            f"Upscaled {scale:.1f}x ({src_dims[0]}x{src_dims[1]} to "
+            f"{out_dims[0]}x{out_dims[1]}) by {PROG}, conservative mode, "
+            f"on {when}. Source: {src_name}. Capture date unchanged."
+        )
+    # A reconstructed texture is not preservation, and the file itself must say so.
+    # Baking this into the writer means disclosure cannot be quietly skipped.
+    if grain == "reconstructed" and "grain" not in base.lower():
+        base = f"{base} Film grain reconstructed to match the stock; not recovered from source evidence."
+    return base
 
 
-def already_noted(text, scale):
-    """Idempotency check: has this tool's marker for this scale already landed?"""
-    if not text:
+def already_noted(text, note):
+    """Has this exact note already landed in a human-readable tag?
+
+    Keyed on the note itself rather than on the tool name or a fixed phrase, so a
+    custom --note dedupes and verifies the same way the default one does.
+    """
+    if not text or not note:
         return False
-    return TOOL in text and f"Upscaled {scale:.1f}x" in text
+    return note.strip() in text
 
 
 def append_text(text, addition):
@@ -328,7 +338,7 @@ def correct_metadata(source, dest, out_size, scale, note, keywords,
     return exiftool_write(dest, args)
 
 
-def verify(source, dest, source_state, out_size, scale, note, use_exiftool):
+def verify(source, dest, source_state, out_size, scale, note, use_exiftool, grain="unknown"):
     """Compare output against source and against reality. Returns (status, report)."""
     problems, shortfalls = [], []
     out = read_state(dest) if use_exiftool else read_state_pillow(dest)
@@ -368,10 +378,20 @@ def verify(source, dest, source_state, out_size, scale, note, use_exiftool):
             problems.append("output aspect ratio drifted from the value recorded")
 
     if use_exiftool:
-        if not already_noted(out.get("UserComment"), scale):
+        # Provenance is checked against the note that was actually written, so a
+        # custom --note is held to the same standard as the default one.
+        if not already_noted(out.get("UserComment"), note):
             problems.append("provenance note missing from UserComment")
         if not out.get("Software"):
             shortfalls.append("Software not written")
+        history_agent = exiftool_read(dest, ["HistorySoftwareAgent"]).get("HistorySoftwareAgent")
+        if not history_agent:
+            shortfalls.append("no XMP-xmpMM:History event was recorded")
+        if grain == "reconstructed" and "grain" not in (out.get("UserComment") or "").lower():
+            problems.append(
+                "grain was reconstructed but the output does not disclose it; "
+                "a reconstruction must never read as preservation"
+            )
 
         # Existing captions must survive, because they are the owner's words.
         src_caption = source_state.get("Caption-Abstract")
@@ -441,6 +461,10 @@ def build_parser():
     p.add_argument("--no-appearance-tags", action="store_true",
                    help="Do not touch Caption-Abstract or Description at all")
     p.add_argument("--no-keywords", action="store_true", help="Do not add any keywords")
+    p.add_argument("--grain", default="unknown",
+                   choices=("preserved", "recovered", "reconstructed", "none", "unknown"),
+                   help="Film-grain decision, recorded in the manifest; "
+                        "'reconstructed' is disclosed in the provenance sentence")
     p.add_argument("--master-name", help="Filename of the unedited master, recorded in the manifest")
     p.add_argument("--force", action="store_true", help="Overwrite an existing output file")
     p.add_argument("--dry-run", action="store_true", help="Report the plan and exit")
@@ -495,7 +519,7 @@ def main():
         )
 
     when = datetime.now().astimezone().strftime("%Y-%m-%d")
-    note = provenance_note(scale, a.source.name, src_display, render_size, when, a.note)
+    note = provenance_note(scale, a.source.name, src_display, render_size, when, a.note, a.grain)
     keywords = [] if a.no_keywords else merge_keywords(["upscaled", TOOL], a.keyword or [])
 
     out_dir = a.out_dir or a.source.parent
@@ -510,6 +534,7 @@ def main():
         "output_size": list(render_size),
         "scale": round(scale, 3),
         "suffix": a.suffix,
+        "grain": a.grain,
         "note": note,
         "keywords": keywords,
         "exiftool": use_exiftool,
@@ -554,7 +579,7 @@ def main():
             except Exception as exc:
                 print(f"warning: Pillow metadata fallback failed: {exc}", file=sys.stderr)
 
-        status, report = verify(a.source, out_path, src_state, render_size, scale, note, use_exiftool)
+        status, report = verify(a.source, out_path, src_state, render_size, scale, note, use_exiftool, a.grain)
         if not use_exiftool:
             report["shortfalls"].append(
                 "exiftool not installed: only the raw EXIF blob and ICC profile were carried; "
@@ -584,6 +609,8 @@ def main():
                            "provenance:written" if use_exiftool else "provenance:not-written"],
             "keywords": keywords,
             "appearance_tags_touched": not a.no_appearance_tags,
+            "grain": a.grain,
+            "grain_disclosed": "grain" in (note or "").lower(),
             "master_filename": a.master_name,
             "verification": status,
             "verification_detail": report,
@@ -599,6 +626,7 @@ def main():
             print(f"scale:  {scale:.3f}x  ({src_display[0]}x{src_display[1]} -> "
                   f"{render_size[0]}x{render_size[1]})")
             print(f"format: {target_format} ({encode_note})")
+            print(f"grain:  {a.grain}")
             print(f"verify: {status.upper()}")
             for p in report["problems"]:
                 print(f"  FAIL: {p}")

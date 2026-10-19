@@ -4,6 +4,24 @@ These prompts are intended for image-editing tools receiving source imagery.
 Pass the *target image* explicitly, plus any separately identified reference
 images. Prefer low edit strength and localized corrections.
 
+## Grain clause
+
+Append the clause that matches the decision from `references/film-grain.md`.
+Never leave grain unmentioned in a film-source prompt; unspecified grain is the
+texture a super-resolution model flattens first.
+
+| Decision | Clause to append |
+| --- | --- |
+| Preserved | `Preserve the existing film grain exactly: same clump size relative to the subject, same randomness, same chroma-luminance balance. Do not smooth flat areas and do not add texture anywhere it is absent.` |
+| Recovered | `Preserve the film grain that is visible in flat areas and carry it through at the same relative scale. Where grain is attenuated, recover it from the source's own flat regions rather than inventing new texture.` |
+| Reconstructed (asked for) | `Add film grain matching this stock's real character: [stock and era]. Random clumping, not uniform noise. Grain size scaled to the output dimensions so it reads as film, not sensor noise. Do not apply it to areas the photographer retouched.` |
+| None (digital) | `Do not add film grain. Preserve the digital image's existing noise character and do not introduce texture that was not in the source.` |
+
+Because a faithful 2× upscale leaves grain twice as large in pixels, the render
+should show grain that is *coarser in pixels and identical in structure*. Grain
+that vanishes in flat areas has been averaged away; grain that is uniformly
+tiny everywhere has been synthesised by the upscaler.
+
 ## A. Ordinary photograph (default)
 
 Upscale the TARGET photograph 2x in both dimensions. Apply conservative
@@ -41,7 +59,9 @@ Keep original film grain, focus falloff, period color or monochrome, and
 photographic texture. Do not erase age lines, alter expressions, repaint
 clothing, modernize materials, colorize black-and-white, or invent faces,
 letters, patterns, or historical details. Preserve image boundaries and
-subject scale.
+subject scale. Keep the paper's surface texture separate from the film grain and
+preserve both; do not let one be mistaken for the other or amplified on the way
+up.
 
 ## D. Group portraits
 
@@ -58,4 +78,6 @@ Increase perceived detail beyond the conservative baseline while continuing
 to preserve all identity, expression, and geometry invariants. Where higher
 detail would require hallucinating distinct physical features, refrain from
 doing so. Prefer local improvements to global reconstruction; compare with
-the original and discard any identity-changing candidate.
+the original and discard any identity-changing candidate. Higher detail is not
+a licence for cleaner texture: sharper does not mean smoother, and grain must
+not be traded for invented micro-detail.

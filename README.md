@@ -5,6 +5,7 @@ A reusable Agent Skills-compatible photo restoration workflow focused on **subje
 - `SKILL.md`: skill metadata, non-negotiable fidelity constraints, restoration workflow, and validation rules.
 - `references/prompt-templates.md`: prompts for normal images, same-person face references, archival scans, and group portraits.
 - `references/qa-checklist.md`: acceptance criteria for faces, expressions, bodies, geometry, and visual quality.
+- `references/film-grain.md`: the grain questions to ask, what grain actually is, stock character, and the one case where synthesizing it is allowed.
 - `references/metadata-and-naming.md`: what metadata travels, what gets corrected, the naming rule, format matrix, and verified exiftool gotchas.
 - `references/macos-photos.md`: recovering the real original out of Photos.app, and importing the result back intact.
 - `scripts/compare.py`: optional side-by-side visual QA sheet; needs Pillow (`python -m pip install Pillow`).
@@ -100,6 +101,31 @@ Optional pieces, all of which degrade gracefully:
 | `exiftool` | copying, correcting, and verifying metadata | Pillow carries the raw EXIF blob and ICC only; the run reports `degraded` and names what was lost |
 | ImageMagick or `sips` | decoding HEIC/HEIF, which Pillow cannot read | HEIC input is refused rather than half-processed |
 | `osxphotos` | getting the real original out of Photos.app, and importing the result back | plain file-path workflow |
+
+## Film grain is a decision, not a default
+
+Grain is the one texture this skill may add, and only under disclosure. Grain is
+in the negative; a print shows that same grain enlarged, and adds paper surface
+texture at a different frequency. The era predicts grain size well enough to
+**check the file**, which is the honest use of "era-appropriate."
+
+| Source grain | Action | Recorded as |
+| --- | --- | --- |
+| Visible and intact | Preserve; denoise before the upscale | `preserved` |
+| Attenuated but present in flat areas | Recover from the source's own flat regions | `recovered` |
+| Absent everywhere | Only if asked; match the stock; disclose | `reconstructed` |
+| Digital capture | Leave alone | `none` |
+
+The check: a faithful 2× upscale leaves grain **twice as large in pixels and
+identical in structure**. Flat, textureless output means the grain was averaged
+away. Uniform tiny texture everywhere means synthetic texture was substituted.
+
+```sh
+python scripts/finalize.py source/IMG_1234.jpg render.png --grain reconstructed
+```
+
+`--grain reconstructed` puts the fact into the provenance sentence automatically,
+so a reconstruction cannot be delivered as if it were preservation.
 
 ## Quick QA
 

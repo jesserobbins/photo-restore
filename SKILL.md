@@ -86,6 +86,7 @@ If the user does not specify otherwise, use:
 | Overwrite | **Never**; collisions append `-2`, `-3` |
 | Metadata | **Copy from source, correct what changed, append provenance** |
 | Capture date | **Never modified**, not even to record the processing time |
+| Film grain | **Preserve or recover from source evidence**; synthesize only when asked, and say so |
 | Original | Retained, unwritten, unmodified |
 
 **Conservative** is not an adjective for a prompt; it is the acceptance
@@ -95,6 +96,29 @@ reject it and use the gentler result.
 Metadata is part of fidelity. A restoration that returns clean pixels and no
 capture date, camera, place, or caption destroyed the archive to improve the
 image. See [references/metadata-and-naming.md](references/metadata-and-naming.md).
+
+## Ask before restoring
+
+Some facts change the pipeline, and only the owner has them. Ask in one message,
+skip what the file already answers, and do not turn this into an interrogation.
+
+**Always worth asking:**
+
+1. What is this photo, and is the fidelity question about the person, the print,
+   or the moment? (It changes how hard to push.)
+2. Do you want the faithful result, the higher-detail result, or both?
+
+**When the source is film or plausibly film:**
+
+3. What era, and do you know the stock or ISO?
+4. Film or digital capture? If digital, no grain is added unless asked.
+5. Scan of a print, scan of the negative, or a photo of a photo?
+6. What should happen to the grain: preserve, recover, reconstruct, or clean up?
+7. Was it retouched? Studio portraits were spotted and softened, and those
+   areas legitimately have no grain.
+
+When the source arrived by drag-and-drop rather than as a path, establish whether
+it is the original first — see [references/macos-photos.md](references/macos-photos.md).
 
 ## Project directories
 
@@ -155,11 +179,12 @@ Prefer this progression, stopping as soon as quality is sufficient:
 1. **Photometric corrections:** slight white balance, exposure, highlights,
    shadows, tonal and color restoration as appropriate.
 2. **Non-generative cleanup:** mild dust/scratch repair, compression cleanup,
-   careful denoise without destroying texture; mask localized damage.
+   careful denoise without destroying texture; mask localized damage. Denoise
+   **before** any upscaling, never after.
 3. **Deterministic / low-hallucination resize:** high-quality resampling
    (e.g. Lanczos) or a demonstrably conservative super-resolution model.
 4. **Light finishing:** modest sharpening and fine-grain management
-   suitable for the output dimensions.
+   suitable for the output dimensions. Never sharpen grain.
 5. **Conditional face-aware reconstruction:** only if steps 1–4 cannot
    reasonably address the defect, with *strong* identity/geometry control
    and no confident fabrication of absent information.
@@ -167,6 +192,28 @@ Prefer this progression, stopping as soon as quality is sufficient:
 Avoid a wholesale diffusion/regeneration pass as the starting point. Face
 restorers that invent eyes, smiles, teeth, hairstyles, or ages are *not*
 acceptable default choices.
+
+### 2a. Decide the grain question before upscaling
+
+Grain is the one texture the skill may add, and only under disclosure. Establish
+which of these applies, using the source's own flat regions as evidence:
+
+| Source grain | Action | Recorded as |
+| --- | --- | --- |
+| Visible and intact | Preserve; denoise gently before the upscale | `preserved` |
+| Attenuated but present in flat areas | Recover by sampling the source's flat areas | `recovered` |
+| Absent everywhere | Only if the owner asked; match the stock's character | `reconstructed` |
+| Digital capture | Leave alone | `none` |
+
+Synthesizing grain into a grainless file is invention — of texture rather than of
+faces. It is acceptable only when requested, matched to what the stock actually
+did, and disclosed in the delivery and the provenance sentence. Prefer recovering
+what is merely attenuated; that is the evidence side of the line.
+
+Remember that a faithful 2× upscale leaves grain twice as large in pixels. That
+is correct. Flat, textureless areas in the output are a grain failure, not a
+cleanup success. Full procedure, stock character, and failure modes:
+[references/film-grain.md](references/film-grain.md).
 
 ### 3. Use reference photos only when provided
 
@@ -211,6 +258,10 @@ Follow [references/qa-checklist.md](references/qa-checklist.md). At minimum:
   background objects, text, and lighting.
 - Look for waxy skin, synthetic pores, ringing/halos, artifacts,
   painted-over grain, oversharpening, speculative textures or alterations.
+- Check grain in a flat region at 100%: sky, wall, out-of-focus background. It
+  should survive at `source × scale` clump size. Flat and textureless means the
+  grain was destroyed; uniform texture everywhere means synthetic texture was
+  substituted; crunchy noise at edges means over-sharpening, not grain.
 - If the output fails **any** high-priority invariant, **reduce processing,
   mask the affected area, or use the conservative baseline**.
 - Optionally run `python scripts/compare.py original.jpg enhanced.png
@@ -259,6 +310,8 @@ they were not run here.
 - Return the restored image where the available tools support it.
 - Say the scale applied and summarize **actual** operations performed.
 - Report the metadata result: `pass`, or the specific `degraded` shortfall.
+- State the grain decision: `preserved`, `recovered`, `reconstructed`, or `none`.
+  A reconstruction is disclosed, never presented as preservation.
 - Say which file was restored when a photo had edits: the edited render or the
   unedited master are different claims about the same filename.
 - Clearly distinguish a non-generative upscale from a generated/restored
@@ -287,6 +340,11 @@ they were not run here.
 | Output has clean pixels but lost the capture date | Treat as a failure, not a success |
 | The delivered file looks like a chat-app re-encode | Get the original before restoring |
 | A caption would be replaced by the provenance note | Append instead; never replace |
+| Flat areas came back smooth and textureless | Report lost grain; preserve or recover, don't shrug |
+| Grain was synthesized without being asked | Remove it, or disclose it as reconstruction |
+| Grain synthesized and not disclosed | Treat as a fidelity failure |
+| Sharpening turned grain into crunchy noise | Reduce sharpening, not grain |
+| Studio-retouched skin has grain added back | Stop; those areas have none by design |
 
 ## Default prompt
 
@@ -296,7 +354,9 @@ they were not run here.
 > clothing. Preserve subject count, composition, cropping, background,
 > objects, perspective, and lighting. Reduce noise and artifacts gently,
 > correct tone/color only where justified, and sharpen without creating
-> synthetic detail. This is a high-fidelity restoration, NOT a reimagining,
+> synthetic detail. Preserve the source's film grain and its natural texture;
+> do not smooth it away and do not invent new texture. This is a high-fidelity
+> restoration, NOT a reimagining,
 > face beautification, or face replacement. If a detail is genuinely absent,
 > keep it uncertain rather than hallucinating it. Keep the output visually
 > faithful to the original even if that means some softness remains.

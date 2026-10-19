@@ -324,7 +324,7 @@ What it guarantees, and what to do if it does not:
 | Reported | Meaning | Action |
 | --- | --- | --- |
 | `pass` | All metadata carried and dimensions consistent. | Deliver. |
-| `degraded` | exiftool absent; only the raw EXIF blob and ICC profile carried. | Say exactly which fields are missing, including that provenance was not written. Do not claim preservation. |
+| `degraded` | Something known could not be carried: no exiftool (so only the raw EXIF blob and ICC went across, and provenance was not written), or an ICC profile that no longer describes the output pixels. Exit 0, shortfall named. | Say exactly which fields the shortfall names. Do not claim preservation. |
 | `fail` | A core tag is missing, a dimension tag disagrees, or a caption was replaced. | **Do not deliver and do not import into Photos.** Fix and rerun. |
 
 The output keeps the source's capture date, camera, GPS, rating, keywords and

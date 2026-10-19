@@ -120,7 +120,7 @@ The check compares the output against the source and against its own pixels:
 | Result | Meaning | What to do |
 | --- | --- | --- |
 | `pass` | Everything carried. | Deliver. |
-| `degraded` | exiftool absent: only the raw EXIF blob and ICC profile were carried. Exit 0, shortfall listed. | Say which fields are missing, including that provenance was not written. |
+| `degraded` | A known gap: exiftool absent, so only the raw EXIF blob and ICC profile crossed and provenance was not written; or an ICC profile dropped because it no longer describes the output pixels. Exit 0, shortfall listed. | Report the shortfall it names rather than describing it as an exiftool gap. |
 | `fail` | A core tag is missing, a dimension tag disagrees, or a caption was replaced. Exit 1, file renamed `*_UNVERIFIED`. | Do not deliver. Do not import into Photos. |
 
 ## Verified exiftool behavior

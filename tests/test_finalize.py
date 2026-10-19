@@ -642,3 +642,57 @@ def test_a_known_shortfall_cannot_report_pass(tmp_path):
     entry = json.loads(r.stdout)
     assert entry["verification"] != "pass", entry["verification"]
     assert entry["verification"] == "degraded"
+
+
+@pytestmark_needs_pillow
+def test_sidecar_only_capture_date_survives(tmp_path):
+    """A date that lives only in the sidecar is still the owner's date."""
+    src = make_jpeg(tmp_path / "s.jpg", tags=False)
+    sidecar = tmp_path / "s.jpg.xmp"
+    subprocess.run(["exiftool", "-q", "-o", str(sidecar), str(src)], check=True)
+    subprocess.run(["exiftool", "-q", "-overwrite_original",
+                    "-DateTimeOriginal=1962:06:14 11:05:00", str(sidecar)], check=True)
+    render = make_jpeg(tmp_path / "r.jpg", size=(120, 90), tags=False)
+
+    r = run_cli(src, render, "--json")
+    assert r.returncode == 0, r.stdout + r.stderr
+    entry = json.loads(r.stdout)
+    got = subprocess.run(["exiftool", "-q", "-s3", "-DateTimeOriginal", entry["output"]],
+                         capture_output=True, text=True).stdout.strip()
+    assert got == "1962:06:14 11:05:00", f"sidecar date lost: {got!r}"
+
+
+@pytestmark_needs_pillow
+def test_gray_profile_dropped_when_alpha_forces_rgb(tmp_path):
+    """LA flattened to RGB cannot keep a grayscale profile."""
+    profiles = [p for p in Path("/System/Library/ColorSync/Profiles").glob("*.icc")
+                if "gray" in p.name.lower() or "grey" in p.name.lower()]
+    if not profiles:
+        pytest.skip("no grayscale ICC profile available")
+
+    gray = Image.new("LA", (60, 45), (128, 255))
+    gray.save(tmp_path / "r.png")
+    subprocess.run(["exiftool", "-q", "-overwrite_original",
+                    f"-ICC_Profile<={profiles[0]}", str(tmp_path / "r.png")], check=True)
+    src = make_jpeg(tmp_path / "s.jpg")
+
+    r = run_cli(src, tmp_path / "r.png", "--format", "jpeg", "--json")
+    assert r.returncode == 0, r.stdout + r.stderr
+    entry = json.loads(r.stdout)
+    carried = subprocess.run(
+        ["exiftool", "-q", "-s3", "-ICC_Profile:ColorSpaceData", entry["output"]],
+        capture_output=True, text=True).stdout.strip()
+    assert carried.upper() not in ("GRAY", "GREY"), \
+        f"grayscale profile on RGB pixels: {carried}"
+
+
+@pytestmark_needs_pillow
+def test_16bit_grayscale_keeps_its_gray_profile(tmp_path):
+    """16-bit gray rescaled to 8-bit L is still gray, so the profile still fits."""
+    gray = Image.new("I;16", (60, 45), 32768)
+    gray.save(tmp_path / "r.tif")
+    src = make_jpeg(tmp_path / "s.jpg", size=(60, 45))
+    r = run_cli(src, tmp_path / "r.tif", "--format", "jpeg")
+    assert r.returncode == 0, r.stdout + r.stderr
+    with Image.open(tmp_path / "s_upscale.jpg") as im:
+        assert im.mode == "L"

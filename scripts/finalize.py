@@ -327,19 +327,20 @@ RGB_FAMILY = {"RGB", "RGBA", "P", "PA"}
 GRAY_FAMILY = {"L", "LA", "La"}
 
 
+# Modes that JPEG flattens into RGB, invalidating a grayscale or press profile.
+JPEG_BREAKS_PROFILE = {"CMYK", "YCCK", "LAB", "HSV", "LA", "La"}
+
+
 def profile_survives(render_mode, target_format):
     """Does the render's own ICC profile still describe the output pixels?
 
-    An RGB profile needs RGB-ish output; a gray profile needs gray output. RGB to
-    JPEG keeps RGB, but an LA render composited to RGB no longer matches its
-    original grayscale profile.
+    PNG and TIFF keep the mode they were handed, so the profile always fits. JPEG
+    forces RGB or L, which breaks a press profile and a grayscale-plus-alpha
+    profile, but keeps a plain grayscale one (16-bit included, rescaled to 8-bit).
     """
-    if render_mode in RGB_FAMILY:
+    if target_format != "jpeg":
         return True
-    if render_mode in GRAY_FAMILY:
-        # JPEG flattens LA onto RGB; L survives as L.
-        return not (target_format == "jpeg" and render_mode != "L")
-    return False
+    return render_mode not in JPEG_BREAKS_PROFILE
 
 
 def detected_format(path):
@@ -442,8 +443,8 @@ def source_embed(source, render, out_size, target_format):
         elif source_icc:
             notes.append(
                 "the source ICC profile was not carried: the output holds the render's "
-                "pixels and the render has no profile, so the source profile would "
-                "have mislabelled them"
+                "pixels, whose own profile either does not exist or no longer "
+                "describes them, so the source profile would have mislabelled them"
             )
     except Exception as exc:
         notes.append(f"could not build an embedded metadata blob: {exc}")
@@ -500,7 +501,6 @@ def encode(render, target_format, workdir, quality, embed=None, transcode=False)
                     "would have to guess a black point."
                 )
         if target_format == "jpeg":
-            colour_model_preserved = render_mode in RGB_FAMILY or render_mode == "L"
             if im.mode in ("RGBA", "LA", "P"):
                 base = Image.new("RGB", im.size, (255, 255, 255))
                 rgba = im.convert("RGBA")
@@ -601,7 +601,7 @@ def copy_metadata(source, dest, render, colour_model_preserved=True, reencoded=T
     return ok, warn, used, icc_note
 
 
-def correct_metadata(dest, out_size, note, keywords, appearance=True, source_state=None):
+def correct_metadata(dest, out_size, note, keywords, appearance=True, source_has_date=None):
     """Pass 2: fix what the upscale made false, and record provenance."""
     # A source UserComment is the owner's words too, so it is appended to rather
     # than replaced -- the same rule as the caption.
@@ -609,10 +609,14 @@ def correct_metadata(dest, out_size, note, keywords, appearance=True, source_sta
 
     # The byte-copy path carries the render's own tags. A render stamped with a
     # processing date would otherwise give an undated source an invented one.
+    # The copy pass merges the image and its sidecar, so "the source had a date"
+    # must be the union of both. Comparing against the image alone would delete a
+    # capture date that lives only in the sidecar -- a CORE_TAG documented as
+    # copied unchanged.
     clear_invented = []
-    if source_state is not None:
+    if source_has_date is False:
         for tag in ("DateTimeOriginal", "CreateDate"):
-            if not source_state.get(tag) and exiftool_read(dest, [tag]).get(tag):
+            if exiftool_read(dest, [tag]).get(tag):
                 clear_invented.append(f"-{tag}=")
     args = [
         # A stale thumbnail is the pre-restoration pixels; some DAMs show it
@@ -660,7 +664,7 @@ def correct_metadata(dest, out_size, note, keywords, appearance=True, source_sta
 
 
 def verify(source, dest, source_state, out_size, note, use_exiftool,
-           grain="unknown", target_format=None):
+           grain="unknown", target_format=None, source_has_date=None):
     """Compare output against source and against reality. Returns (status, report)."""
     problems, shortfalls = [], []
     out = read_state(dest) if use_exiftool else read_state_pillow(dest)
@@ -671,7 +675,7 @@ def verify(source, dest, source_state, out_size, note, use_exiftool,
         if had and not now:
             problems.append(f"lost {tag} (source had '{had}')")
 
-    if (use_exiftool and not source_state.get("DateTimeOriginal")
+    if (use_exiftool and source_has_date is False
             and out.get("DateTimeOriginal")):
         problems.append(
             f"the source has no DateTimeOriginal but the output claims "
@@ -925,6 +929,15 @@ def main():
             file=sys.stderr,
         )
 
+    # Does the source record a capture date anywhere? Image or sidecar.
+    source_has_date = bool(src_state.get("DateTimeOriginal"))
+    src_sidecar = a.source.with_name(a.source.name + ".xmp")
+    if not source_has_date and src_sidecar.exists() and use_exiftool:
+        source_has_date = bool(
+            exiftool_read(src_sidecar, ["DateTimeOriginal"]).get("DateTimeOriginal")
+        )
+    source_has_date = source_has_date if use_exiftool else None
+
     when = datetime.now().astimezone().strftime("%Y-%m-%d")
     note = provenance_note(scale, a.source.name, src_display, render_display,
                            when, a.note, a.grain)
@@ -983,7 +996,9 @@ def main():
         embed, embed_notes = (None, []) if use_exiftool else source_embed(
             a.source, a.render, render_display, target_format
         )
-        transcode = render_orientation not in ("1", "0")
+        # Without exiftool the render's own tags must never survive untouched:
+        # an undated source would inherit the render's processing date.
+        transcode = render_orientation not in ("1", "0") or not use_exiftool
         try:
             staged, transcoded, encode_note, colour_ok = encode(
                 a.render, target_format, workdir, a.quality, embed=embed, transcode=transcode
@@ -1011,14 +1026,15 @@ def main():
             correct_ok, correct_warn = correct_metadata(
                 out_path, render_display, note, keywords,
                 appearance=not a.no_appearance_tags,
-                source_state=src_state,
+                source_has_date=source_has_date,
             )
             if not correct_ok:
                 write_problems.append("exiftool could not write the corrected tags")
             copy_warn = "\n".join(w for w in (copy_warn, correct_warn) if w)
 
         status, report = verify(a.source, out_path, src_state, render_display, note,
-                                use_exiftool, a.grain, target_format)
+                                use_exiftool, a.grain, target_format,
+                                source_has_date=source_has_date)
         report["shortfalls"].extend(embed_notes)
         if icc_warning:
             report["shortfalls"].append(icc_warning)

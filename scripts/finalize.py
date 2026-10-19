@@ -323,6 +323,25 @@ def choose_format(source, requested):
     return "jpeg"
 
 
+RGB_FAMILY = {"RGB", "RGBA", "P", "PA"}
+GRAY_FAMILY = {"L", "LA", "La"}
+
+
+def profile_survives(render_mode, target_format):
+    """Does the render's own ICC profile still describe the output pixels?
+
+    An RGB profile needs RGB-ish output; a gray profile needs gray output. RGB to
+    JPEG keeps RGB, but an LA render composited to RGB no longer matches its
+    original grayscale profile.
+    """
+    if render_mode in RGB_FAMILY:
+        return True
+    if render_mode in GRAY_FAMILY:
+        # JPEG flattens LA onto RGB; L survives as L.
+        return not (target_format == "jpeg" and render_mode != "L")
+    return False
+
+
 def detected_format(path):
     """Actual container from file contents. An extension is a claim, not a fact."""
     try:
@@ -379,7 +398,7 @@ EXIF_PIXEL_X = 0xA002
 EXIF_PIXEL_Y = 0xA003
 
 
-def source_embed(source, render, out_size):
+def source_embed(source, render, out_size, target_format):
     """EXIF blob and ICC profile for the no-exiftool path.
 
     Two things must not be inherited blindly. Dimensions: the source's
@@ -410,10 +429,10 @@ def source_embed(source, render, out_size):
         render_icc = None
         try:
             with Image.open(render) as rnd:
-                # Only carry the render's profile when its pixels keep their colour
-                # model. A CMYK render converted to RGB must not ship a press
-                # profile on 3-channel data.
-                if rnd.mode in ("RGB", "L"):
+                # Same rule as encode(): the profile must still describe the mode
+                # the pixels end up in. An LA render flattened to RGB must not keep
+                # a grayscale profile.
+                if profile_survives(rnd.mode, target_format):
                     render_icc = rnd.info.get("icc_profile")
         except Exception:
             # decode() may still handle it (HEIC); its profile cannot be read here.
@@ -457,10 +476,15 @@ def encode(render, target_format, workdir, quality, embed=None, transcode=False)
             )
 
     save_kw = dict(embed or {})
-    # Only a colour-model conversion invalidates the render's ICC profile. Dropping
-    # alpha does not, and PNG/TIFF keep whatever mode they were given.
     colour_model_preserved = True
+    render_mode = ""
     with Image.open(staged) as im:
+        render_mode = im.mode
+        # Only a conversion that changes colour space invalidates the profile.
+        # PNG/TIFF keep the mode they were handed.
+        colour_model_preserved = (
+            True if target_format != "jpeg" else profile_survives(render_mode, target_format)
+        )
         # Baking the transform here is why the orientation tag can be normalised
         # afterwards: after this point the pixels are upright.
         im = ImageOps.exif_transpose(im)
@@ -476,7 +500,7 @@ def encode(render, target_format, workdir, quality, embed=None, transcode=False)
                     "would have to guess a black point."
                 )
         if target_format == "jpeg":
-            colour_model_preserved = im.mode not in ("CMYK", "YCCK", "LAB", "HSV")
+            colour_model_preserved = render_mode in RGB_FAMILY or render_mode == "L"
             if im.mode in ("RGBA", "LA", "P"):
                 base = Image.new("RGB", im.size, (255, 255, 255))
                 rgba = im.convert("RGBA")
@@ -532,11 +556,17 @@ def copy_metadata(source, dest, render, colour_model_preserved=True, reencoded=T
             .get("ICC_Profile:ProfileDescription")
         )
         if source_has_icc:
-            exiftool_write(dest, ["-ICC_Profile:all="])
+            ok_strip, warn_strip = exiftool_write(dest, ["-ICC_Profile:all="])
+            ok = ok and ok_strip
+            warn = "\n".join(w for w in (warn, warn_strip) if w)
+            reason = (
+                "the render's colour model changed, so its profile no longer applies"
+                if render_has_icc else
+                "the render carries no profile of its own"
+            )
             icc_note = (
-                "the source ICC profile was not carried: the output holds the render's "
-                "pixels, which have no profile of their own, so the source profile "
-                "would have mislabelled them"
+                f"the source ICC profile was not carried: {reason}, so the source "
+                "profile would have mislabelled the output pixels"
             )
 
     sidecar = source.with_name(source.name + ".xmp")
@@ -571,14 +601,23 @@ def copy_metadata(source, dest, render, colour_model_preserved=True, reencoded=T
     return ok, warn, used, icc_note
 
 
-def correct_metadata(dest, out_size, note, keywords, appearance=True):
+def correct_metadata(dest, out_size, note, keywords, appearance=True, source_state=None):
     """Pass 2: fix what the upscale made false, and record provenance."""
     # A source UserComment is the owner's words too, so it is appended to rather
     # than replaced -- the same rule as the caption.
     existing_comment = exiftool_read(dest, ["UserComment"]).get("UserComment")
+
+    # The byte-copy path carries the render's own tags. A render stamped with a
+    # processing date would otherwise give an undated source an invented one.
+    clear_invented = []
+    if source_state is not None:
+        for tag in ("DateTimeOriginal", "CreateDate"):
+            if not source_state.get(tag) and exiftool_read(dest, [tag]).get(tag):
+                clear_invented.append(f"-{tag}=")
     args = [
         # A stale thumbnail is the pre-restoration pixels; some DAMs show it
         # instead of the real image.
+        *clear_invented,
         "-ThumbnailImage=",
         "-PreviewImage=",
         # Numeric form is mandatory: -Orientation=1 is silently ignored.
@@ -632,6 +671,12 @@ def verify(source, dest, source_state, out_size, note, use_exiftool,
         if had and not now:
             problems.append(f"lost {tag} (source had '{had}')")
 
+    if (use_exiftool and not source_state.get("DateTimeOriginal")
+            and out.get("DateTimeOriginal")):
+        problems.append(
+            f"the source has no DateTimeOriginal but the output claims "
+            f"'{out['DateTimeOriginal']}'; the render's own date was inherited"
+        )
     if source_state.get("DateTimeOriginal") and out.get("DateTimeOriginal"):
         if out["DateTimeOriginal"] != source_state["DateTimeOriginal"]:
             problems.append(
@@ -936,7 +981,7 @@ def main():
         # embedded during the single save instead. One encode, never read-then-
         # rewrite the same path.
         embed, embed_notes = (None, []) if use_exiftool else source_embed(
-            a.source, a.render, render_display
+            a.source, a.render, render_display, target_format
         )
         transcode = render_orientation not in ("1", "0")
         try:
@@ -966,6 +1011,7 @@ def main():
             correct_ok, correct_warn = correct_metadata(
                 out_path, render_display, note, keywords,
                 appearance=not a.no_appearance_tags,
+                source_state=src_state,
             )
             if not correct_ok:
                 write_problems.append("exiftool could not write the corrected tags")
@@ -976,6 +1022,9 @@ def main():
         report["shortfalls"].extend(embed_notes)
         if icc_warning:
             report["shortfalls"].append(icc_warning)
+        if status == "pass" and report["shortfalls"]:
+            # A known preservation shortfall is a degraded result, not a pass.
+            status = "degraded"
         if write_problems:
             report["problems"].extend(write_problems)
             status = "fail"

@@ -128,3 +128,19 @@ def test_rerunning_with_identical_arguments_is_idempotent(tmp_path):
     data = json.loads((proj / "manifest.json").read_text())
     assert data["sources"] == ["source/target.jpg"]
     assert data["references"]["face"] == ["refs/face/face.jpg"]
+
+
+def test_refused_image_does_not_leave_its_sidecar_behind(tmp_path):
+    """A refused photo must not attach its captions to the evidence already there."""
+    kept = make_image(tmp_path / "a" / "keep.jpg", (1, 2, 3))
+    proj = tmp_path / "p"
+    run_cli(proj, "--source", kept)
+
+    impostor = make_image(tmp_path / "b" / "keep.jpg", (250, 250, 250))
+    (tmp_path / "b" / "keep.jpg.xmp").write_text("<x:xmpmeta/>")
+
+    r = run_cli(proj, "--force", "--source", impostor)
+    assert "already exists" in (r.stdout + r.stderr)
+    assert not (proj / "source" / "keep.jpg.xmp").exists(), \
+        "the refused photo's sidecar must not land beside the kept source"
+    assert (proj / "source" / "keep.jpg").read_bytes() == kept.read_bytes()

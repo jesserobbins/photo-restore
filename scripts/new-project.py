@@ -136,11 +136,10 @@ def copy_in(files, dest, project, rename=None, role="file"):
             raise SystemExit(f"Not found: {f}")
         name = f"{f.stem}{rename}{f.suffix}" if rename else f.name
         target = dest / name
-        # The sidecar travels with the image whether or not the image is new.
         sidecar = f.with_name(f.name + ".xmp")
         sidecar_dest = dest / (name + ".xmp")
-        if sidecar.exists() and not sidecar_dest.exists():
-            shutil.copy2(sidecar, sidecar_dest)
+        # Validate the image BEFORE touching its sidecar. Copying the sidecar first
+        # would attach a refused photo's captions to the evidence already there.
         if target.exists():
             # Re-running with the same arguments must be idempotent; only a
             # *different* file under the same name is a problem.
@@ -155,10 +154,24 @@ def copy_in(files, dest, project, rename=None, role="file"):
                     f"the incoming {role} or use a different project; refusing to "
                     "overwrite evidence."
                 )
+            if sidecar.exists() and not sidecar_dest.exists():
+                shutil.copy2(sidecar, sidecar_dest)
             placed.append(str(target.relative_to(project)))
             continue
-        if not target.exists():
-            shutil.copy2(f, target)
+        # Claim the name atomically, then fill it: two scaffold runs importing
+        # same-named files from different folders must not overwrite each other.
+        try:
+            fd = os.open(target, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+        except FileExistsError:
+            raise SystemExit(
+                f"{target.relative_to(project)} was created by another run; "
+                "check for a concurrent scaffold"
+            )
+        os.close(fd)
+        shutil.copyfile(f, target)
+        shutil.copystat(f, target)
+        if sidecar.exists():
+            shutil.copy2(sidecar, sidecar_dest)
         placed.append(str(target.relative_to(project)))
     return placed
 

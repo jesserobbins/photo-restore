@@ -608,3 +608,37 @@ def test_large_image_is_not_blocked_by_the_bomb_guard(tmp_path):
     # Confirm the guard is off rather than generating a 460 MP file.
     from PIL import Image as PILImage
     assert PILImage.MAX_IMAGE_PIXELS is None
+
+
+@pytestmark_needs_pillow
+def test_render_date_is_not_invented_for_an_undated_source(tmp_path):
+    """The byte-copy path carries render tags; an undated source must stay undated."""
+    src = make_jpeg(tmp_path / "s.jpg", tags=False)
+    render = make_jpeg(tmp_path / "r.jpg", size=(120, 90), tags=True)
+    r = run_cli(src, render)
+    assert r.returncode == 0, r.stdout + r.stderr
+
+    got = subprocess.run(["exiftool", "-q", "-s3", "-DateTimeOriginal",
+                          str(tmp_path / "s_upscale.jpg")],
+                         capture_output=True, text=True).stdout.strip()
+    assert got == "", f"invented capture date {got!r}"
+
+
+@pytestmark_needs_pillow
+def test_a_known_shortfall_cannot_report_pass(tmp_path):
+    """Shortfalls found after verify() must downgrade the status."""
+    profiles = sorted(Path("/System/Library/ColorSync/Profiles").glob("*.icc"))
+    if not profiles:
+        pytest.skip("no system ICC profiles")
+    src = make_jpeg(tmp_path / "s.jpg")
+    subprocess.run(["exiftool", "-q", "-overwrite_original",
+                    f"-ICC_Profile<={profiles[0]}", str(src)], check=True)
+    render = make_jpeg(tmp_path / "r.jpg", size=(120, 90), tags=False)
+    subprocess.run(["exiftool", "-q", "-overwrite_original",
+                    "-ICC_Profile:all=", str(render)], check=True)
+
+    r = run_cli(src, render, "--json")
+    assert r.returncode == 0, r.stderr
+    entry = json.loads(r.stdout)
+    assert entry["verification"] != "pass", entry["verification"]
+    assert entry["verification"] == "degraded"

@@ -11,6 +11,22 @@ what to correct, and what to record.
 what the upscale made false, append your provenance, and never replace the
 owner's words.
 
+### The output carries the render's pixels, never its claims
+
+A render is whatever tool produced it, and those tools stamp things: their own
+camera, their own location, a processing timestamp, a comment, a caption. None of
+that is evidence about the photograph.
+
+So the metadata pass works on a **blank slate**. When the pixels are copied
+through unchanged, the staged file is stripped of everything (`exiftool -all=`)
+before the source's metadata is written onto it. What arrives is the source's,
+and there is nothing to un-invent.
+
+This replaced an earlier design that copied everything and then cleared what the
+render had invented. That version needed an entry for every tag a tool might
+stamp -- dates, camera, GPS, caption, comment, thumbnail, dimensions -- and each
+addition created the next gap. Stripping once is bounded; enumerating is not.
+
 ## What travels, and what changes
 
 | Tag | Action | Why |

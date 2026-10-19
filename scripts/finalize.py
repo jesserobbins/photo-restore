@@ -184,6 +184,23 @@ def transposed_size(size, orientation):
     return size
 
 
+def expected_source_state(source, use_exiftool):
+    """What the output must contain: the source image unioned with its sidecar.
+
+    Verification compared against the image file alone, so a caption or a capture
+    date that lives only in an XMP sidecar -- what `osxphotos export --sidecar
+    xmp` produces -- was unverifiable: its loss would have reported pass.
+    """
+    state = read_state(source) if use_exiftool else read_state_pillow(source)
+    if use_exiftool:
+        sidecar = source.with_name(source.name + ".xmp")
+        if sidecar.exists():
+            for key, value in read_state(sidecar).items():
+                if value and not state.get(key):
+                    state[key] = value
+    return state
+
+
 def read_state(path):
     tags = exiftool_read(
         path,
@@ -459,7 +476,12 @@ def encode(render, target_format, workdir, quality, embed=None, transcode=False)
         # metadata pass handle tags. Anything else costs a quality generation.
         out = workdir / f"stage{render.suffix}"
         shutil.copy2(render, out)
-        return out, False, "container and orientation already correct, pixels untouched", True
+        # The output carries the render's *pixels*, never its claims. Stripping
+        # here means the source's metadata is written onto a blank slate, so
+        # there is nothing to un-invent: an editing tool's camera, location,
+        # caption or processing date cannot survive into a delivered file.
+        exiftool_write(out, ["-all="])
+        return out, False, "pixels untouched; render metadata stripped", True
 
     out = workdir / f"stage{FORMAT_EXT[target_format]}"
     from PIL import Image, ImageOps
@@ -542,7 +564,7 @@ def copy_metadata(source, dest, render, colour_model_preserved=True, reencoded=T
     icc_note = None
     if render_has_icc and colour_model_preserved:
         ok_icc, warn_icc = exiftool_write(
-            dest, ["-TagsFromFile", str(render), "-ICC_Profile:all"]
+            dest, ["-TagsFromFile", str(render), "-ICC_Profile"]
         )
         ok = ok and ok_icc
         warn = "\n".join(w for w in (warn, warn_icc) if w)
@@ -601,27 +623,15 @@ def copy_metadata(source, dest, render, colour_model_preserved=True, reencoded=T
     return ok, warn, used, icc_note
 
 
-def correct_metadata(dest, out_size, note, keywords, appearance=True, source_has_date=None):
+def correct_metadata(dest, out_size, note, keywords, appearance=True):
     """Pass 2: fix what the upscale made false, and record provenance."""
     # A source UserComment is the owner's words too, so it is appended to rather
     # than replaced -- the same rule as the caption.
     existing_comment = exiftool_read(dest, ["UserComment"]).get("UserComment")
 
-    # The byte-copy path carries the render's own tags. A render stamped with a
-    # processing date would otherwise give an undated source an invented one.
-    # The copy pass merges the image and its sidecar, so "the source had a date"
-    # must be the union of both. Comparing against the image alone would delete a
-    # capture date that lives only in the sidecar -- a CORE_TAG documented as
-    # copied unchanged.
-    clear_invented = []
-    if source_has_date is False:
-        for tag in ("DateTimeOriginal", "CreateDate"):
-            if exiftool_read(dest, [tag]).get(tag):
-                clear_invented.append(f"-{tag}=")
     args = [
         # A stale thumbnail is the pre-restoration pixels; some DAMs show it
         # instead of the real image.
-        *clear_invented,
         "-ThumbnailImage=",
         "-PreviewImage=",
         # Numeric form is mandatory: -Orientation=1 is silently ignored.
@@ -664,7 +674,7 @@ def correct_metadata(dest, out_size, note, keywords, appearance=True, source_has
 
 
 def verify(source, dest, source_state, out_size, note, use_exiftool,
-           grain="unknown", target_format=None, source_has_date=None):
+           grain="unknown", target_format=None):
     """Compare output against source and against reality. Returns (status, report)."""
     problems, shortfalls = [], []
     out = read_state(dest) if use_exiftool else read_state_pillow(dest)
@@ -675,12 +685,6 @@ def verify(source, dest, source_state, out_size, note, use_exiftool,
         if had and not now:
             problems.append(f"lost {tag} (source had '{had}')")
 
-    if (use_exiftool and source_has_date is False
-            and out.get("DateTimeOriginal")):
-        problems.append(
-            f"the source has no DateTimeOriginal but the output claims "
-            f"'{out['DateTimeOriginal']}'; the render's own date was inherited"
-        )
     if source_state.get("DateTimeOriginal") and out.get("DateTimeOriginal"):
         if out["DateTimeOriginal"] != source_state["DateTimeOriginal"]:
             problems.append(
@@ -894,7 +898,7 @@ def main():
     src_size = image_size(a.source)
     if src_size is None:
         die(f"Could not read dimensions of {a.source}")
-    src_state = read_state(a.source) if use_exiftool else read_state_pillow(a.source)
+    src_state = expected_source_state(a.source, use_exiftool)
     # image_orientation() falls back to magick/sips, which is how a HEIC source
     # gets a real orientation on a host without exiftool.
     src_orientation = (src_state.get("Orientation#")
@@ -928,15 +932,6 @@ def main():
             "what they are, but the output will be smaller than the original.",
             file=sys.stderr,
         )
-
-    # Does the source record a capture date anywhere? Image or sidecar.
-    source_has_date = bool(src_state.get("DateTimeOriginal"))
-    src_sidecar = a.source.with_name(a.source.name + ".xmp")
-    if not source_has_date and src_sidecar.exists() and use_exiftool:
-        source_has_date = bool(
-            exiftool_read(src_sidecar, ["DateTimeOriginal"]).get("DateTimeOriginal")
-        )
-    source_has_date = source_has_date if use_exiftool else None
 
     when = datetime.now().astimezone().strftime("%Y-%m-%d")
     note = provenance_note(scale, a.source.name, src_display, render_display,
@@ -1026,15 +1021,13 @@ def main():
             correct_ok, correct_warn = correct_metadata(
                 out_path, render_display, note, keywords,
                 appearance=not a.no_appearance_tags,
-                source_has_date=source_has_date,
             )
             if not correct_ok:
                 write_problems.append("exiftool could not write the corrected tags")
             copy_warn = "\n".join(w for w in (copy_warn, correct_warn) if w)
 
         status, report = verify(a.source, out_path, src_state, render_display, note,
-                                use_exiftool, a.grain, target_format,
-                                source_has_date=source_has_date)
+                                use_exiftool, a.grain, target_format)
         report["shortfalls"].extend(embed_notes)
         if icc_warning:
             report["shortfalls"].append(icc_warning)

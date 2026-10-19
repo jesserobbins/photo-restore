@@ -696,3 +696,56 @@ def test_16bit_grayscale_keeps_its_gray_profile(tmp_path):
     assert r.returncode == 0, r.stdout + r.stderr
     with Image.open(tmp_path / "s_upscale.jpg") as im:
         assert im.mode == "L"
+
+
+@pytestmark_needs_pillow
+def test_render_only_metadata_never_reaches_the_output(tmp_path):
+    """The structural rule: the output carries the render's pixels, not its claims.
+
+    Before the blank-slate change, a byte-copied render's own camera, location and
+    comment survived, and each one had to be un-copied by hand.
+    """
+    src = make_jpeg(tmp_path / "s.jpg", tags=True)          # Kodak / Retina, dated
+    render = make_jpeg(tmp_path / "r.jpg", size=(120, 90), tags=False)
+    subprocess.run(["exiftool", "-q", "-overwrite_original",
+                    "-Make=Canon", "-Model=EOS R5",
+                    "-GPSLatitude=51.5", "-GPSLatitudeRef=N",
+                    "-Caption-Abstract=An editing tool wrote this",
+                    "-UserComment=edited by thing 3.1",
+                    "-DateTimeOriginal=2026:01:01 09:00:00", str(render)], check=True)
+
+    r = run_cli(src, render)
+    assert r.returncode == 0, r.stdout + r.stderr
+
+    got = subprocess.run(
+        ["exiftool", "-q", "-q", "-json", "-Make", "-Model", "-GPSLatitude",
+         "-Caption-Abstract", "-UserComment", "-DateTimeOriginal",
+         str(tmp_path / "s_upscale.jpg")],
+        capture_output=True, text=True).stdout
+    tags = json.loads(got)[0]
+    assert tags.get("Make") == "Kodak", tags.get("Make")
+    assert tags.get("Model") == "Retina", tags.get("Model")
+    assert "51.5" not in str(tags.get("GPSLatitude", "")), "render location leaked"
+    assert "editing tool" not in str(tags.get("Caption-Abstract", "")), \
+        "render caption leaked"
+    assert "edited by thing" not in str(tags.get("UserComment", "")), \
+        "render comment leaked"
+    assert tags.get("DateTimeOriginal") == "1962:06:14 11:05:00", \
+        "render date leaked over the source's"
+
+
+@pytestmark_needs_pillow
+def test_create_date_only_source_keeps_its_date(tmp_path):
+    """The per-tag bug the structural fix removes: CreateDate alone is a CORE_TAG."""
+    src = make_jpeg(tmp_path / "s.jpg", tags=False)
+    subprocess.run(["exiftool", "-q", "-overwrite_original",
+                    "-CreateDate=1962:06:14 11:05:00", str(src)], check=True)
+    render = make_jpeg(tmp_path / "r.jpg", size=(120, 90), tags=False)
+
+    r = run_cli(src, render)
+    assert r.returncode == 0, r.stdout + r.stderr
+    got = subprocess.run(["exiftool", "-q", "-s3", "-CreateDate",
+                          str(tmp_path / "s_upscale.jpg")],
+                         capture_output=True, text=True).stdout.strip()
+    assert got == "1962:06:14 11:05:00", f"owner's CreateDate lost: {got!r}"
+    assert not list(tmp_path.glob("*_UNVERIFIED*")), "a correct run was quarantined"

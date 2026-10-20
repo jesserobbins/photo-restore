@@ -1014,6 +1014,13 @@ def test_no_appearance_tags_leaves_captions_alone(tmp_path):
                     "-Description=From the sidecar", str(sidecar)], check=True)
     render = make_jpeg(tmp_path / "r.jpg", size=(120, 90), tags=False)
 
+    # Default run keeps both captions; this is what the flag suppresses.
+    baseline = json.loads(run_cli(src, render, "--json", "--suffix", "_base").stdout)
+    base_desc = subprocess.run(
+        ["exiftool", "-q", "-s3", "-Description", baseline["output"]],
+        capture_output=True, text=True).stdout
+    assert "From the sidecar" in base_desc, base_desc
+
     r = run_cli(src, render, "--no-appearance-tags", "--json")
     assert r.returncode == 0, r.stdout + r.stderr
     entry = json.loads(r.stdout)
@@ -1021,6 +1028,10 @@ def test_no_appearance_tags_leaves_captions_alone(tmp_path):
     got = subprocess.run(["exiftool", "-q", "-s3", "-Description", entry["output"]],
                          capture_output=True, text=True).stdout
     assert "Upscaled" not in got, f"provenance reached the caption: {got!r}"
+    assert "From the sidecar" not in got, "the flag did not suppress the merge"
+    # Suppressing it is the flag's purpose, but the loss is disclosed, not silent.
+    assert entry["verification"] == "degraded", entry["verification"]
+    assert any("no-appearance-tags" in s for s in entry["verification_detail"]["shortfalls"])
 
 
 @pytestmark_needs_pillow

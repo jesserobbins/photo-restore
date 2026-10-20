@@ -538,7 +538,11 @@ def source_embed(source, render, out_size, target_format):
                                    0x0111, 0x0115, 0x0116, 0x0117, 0x011C,
                                    0x011E, 0x011F,
                                    0x0142, 0x0143, 0x0144, 0x0145,
-                                   0x8773, 0x02BC):
+                                   0x8773, 0x02BC,
+                                   # SampleFormat declares the source's sample type;
+                                   # a float TIFF source would otherwise claim float
+                                   # samples on an 8-bit output.
+                                   0x0153):
                     exif.pop(structural, None)
                 exif[274] = 1  # pixels are baked upright by the time this is attached
                 sub = exif.get_ifd(0x8769)
@@ -744,7 +748,14 @@ def copy_metadata(source, dest, render, colour_model_preserved=True, reencoded=T
         # letting the image copy erase it, but never rewrite a Description that
         # carries translated alternatives, because a bare write deletes them.
         if not appearance:
-            pass  # --no-appearance-tags: captions are left exactly as copied
+            # The image copy has just overwritten the sidecar's caption and the
+            # merge is suppressed, so the sidecar's words are gone. That is the
+            # flag's purpose, but it must not be silent.
+            if sidecar_desc.strip() and sidecar_desc.strip() not in image_desc:
+                extra_notes.append(
+                    "--no-appearance-tags was set, so the sidecar's caption was not "
+                    "kept alongside the image's"
+                )
         elif sidecar_desc.strip() and sidecar_desc.strip() not in image_desc:
             if xmp_description_has_alternates(dest):
                 extra_notes.append(

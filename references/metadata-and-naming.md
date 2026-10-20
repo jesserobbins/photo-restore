@@ -169,7 +169,14 @@ Working two-pass recipe:
 exiftool -overwrite_original -all= "$DST"
 exiftool -overwrite_original -TagsFromFile "$SRC" -all:all -unsafe "$DST"
 
-# 2. append to the owner's words, never replace them. UserComment included:
+# 2. the render's own profile must not survive, and the source's must not be
+#    pasted onto render pixels. Carry the profile that matches the pixels, or
+#    none at all -- never the source's. Step 1 already stripped the render's, so
+#    only restore one if the render had a profile that still applies:
+#      exiftool -overwrite_original -TagsFromFile "$RENDER" -ICC_Profile "$DST"
+#    Skip that line when the render was re-encoded into a different colour model.
+
+# 3. append to the owner's words, never replace them. UserComment included:
 #    a scanner note or a previous editor's remark is someone else's record.
 EXISTING=$(exiftool -q -s3 -UserComment "$DST")
 if [ -n "$EXISTING" ]; then NOTE="$EXISTING $NOTE"; fi
@@ -187,9 +194,11 @@ exiftool -overwrite_original -Orientation#=1 -XMP-tiff:Orientation#=1 \
 `XMP-tiff:Orientation` is corrected alongside the EXIF tag because `-all:all`
 copies it too, and readers that prefer XMP will otherwise rotate upright pixels.
 
-One known limit of the Pillow-only path: Pillow's TIFF reader presents some
-16-bit RGB inputs as 8-bit, so a rotated 16-bit RGB TIFF can be demoted without a
-warning. Where precision matters, run with `exiftool` installed.
+One known limit, and `exiftool` does not lift it: any Pillow re-encode of a
+16-bit RGB TIFF yields 8-bit RGB, because Pillow presents that input as 8-bit.
+A rotated 16-bit RGB TIFF is re-encoded whenever orientation has to be baked, so
+it can be demoted without a warning even with `exiftool` installed. Convert such
+a file with a tool that preserves depth, or accept 8 bits deliberately.
 
 ## When there are no scripts
 

@@ -1000,3 +1000,53 @@ def test_pagename_is_not_treated_as_structural(tmp_path):
     got = subprocess.run(["exiftool", "-q", "-s3", "-PageName", entry["output"]],
                          capture_output=True, text=True).stdout.strip()
     assert got == "Graduation portrait", f"PageName lost: {got!r}"
+
+
+@pytestmark_needs_pillow
+def test_no_appearance_tags_leaves_captions_alone(tmp_path):
+    """The flag promises captions are untouched; the sidecar merge must honour it."""
+    src = make_jpeg(tmp_path / "s.jpg")
+    subprocess.run(["exiftool", "-q", "-overwrite_original",
+                    "-Description=From the image", str(src)], check=True)
+    sidecar = tmp_path / "s.jpg.xmp"
+    subprocess.run(["exiftool", "-q", "-o", str(sidecar), str(src)], check=True)
+    subprocess.run(["exiftool", "-q", "-overwrite_original",
+                    "-Description=From the sidecar", str(sidecar)], check=True)
+    render = make_jpeg(tmp_path / "r.jpg", size=(120, 90), tags=False)
+
+    r = run_cli(src, render, "--no-appearance-tags", "--json")
+    assert r.returncode == 0, r.stdout + r.stderr
+    entry = json.loads(r.stdout)
+    assert entry["appearance_tags_touched"] is False
+    got = subprocess.run(["exiftool", "-q", "-s3", "-Description", entry["output"]],
+                         capture_output=True, text=True).stdout
+    assert "Upscaled" not in got, f"provenance reached the caption: {got!r}"
+
+
+@pytestmark_needs_pillow
+def test_tiff_xmp_does_not_survive_the_pillow_only_path(tmp_path):
+    """Stale XMP orientation and dimensions must not ride inside the EXIF blob."""
+    src = tmp_path / "s.tif"
+    Image.new("RGB", (60, 45), (80, 90, 100)).save(src)
+    subprocess.run(["exiftool", "-q", "-overwrite_original",
+                    "-Orientation#=6", "-XMP-tiff:Orientation#=6",
+                    "-XMP-exif:ExifImageWidth=60", str(src)], check=True)
+    # Source displays 45x60 (Pillow's TIFF reader already swapped it), so the
+    # render must display 90x120: stored as 120x90 with orientation 6.
+    render = tmp_path / "r.jpg"
+    Image.new("RGB", (120, 90), (80, 90, 100)).save(render, quality=95)
+    subprocess.run(["exiftool", "-q", "-overwrite_original", "-Orientation#=6",
+                    str(render)], check=True)
+
+    env = dict(os.environ)
+    env["PATH"] = os.pathsep.join(
+        p for p in env.get("PATH", "").split(os.pathsep)
+        if not (Path(p) / "exiftool").exists()
+    )
+    r = run_cli(src, render, "--json", "--format", "jpeg", env=env)
+    assert r.returncode == 0, r.stderr
+    entry = json.loads(r.stdout)
+    width = subprocess.run(
+        ["exiftool", "-q", "-s3", "-XMP-exif:ExifImageWidth", entry["output"]],
+        capture_output=True, text=True).stdout.strip()
+    assert width in ("", "120"), f"stale XMP dimension survived: {width!r}"

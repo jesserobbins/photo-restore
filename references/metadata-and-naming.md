@@ -162,7 +162,11 @@ knowing before trusting a one-line command:
 Working two-pass recipe:
 
 ```sh
-# 1. copy everything
+# 1. strip the render completely, THEN copy the source in. Without this step a
+#    render's own capture date, camera or location survives next to the source's
+#    and cannot be told apart afterwards. This is the blank-slate rule, and
+#    skipping it is how a manual restore invents a capture date.
+exiftool -overwrite_original -all= "$DST"
 exiftool -overwrite_original -TagsFromFile "$SRC" -all:all -unsafe "$DST"
 
 # 2. append to the owner's words, never replace them. UserComment included:
@@ -182,6 +186,10 @@ exiftool -overwrite_original -Orientation#=1 -XMP-tiff:Orientation#=1 \
 
 `XMP-tiff:Orientation` is corrected alongside the EXIF tag because `-all:all`
 copies it too, and readers that prefer XMP will otherwise rotate upright pixels.
+
+One known limit of the Pillow-only path: Pillow's TIFF reader presents some
+16-bit RGB inputs as 8-bit, so a rotated 16-bit RGB TIFF can be demoted without a
+warning. Where precision matters, run with `exiftool` installed.
 
 ## When there are no scripts
 

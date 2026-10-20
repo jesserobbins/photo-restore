@@ -653,7 +653,8 @@ def encode(render, target_format, workdir, quality, embed=None, transcode=False)
     return out, True, detail, colour_model_preserved, depth_note
 
 
-def copy_metadata(source, dest, render, colour_model_preserved=True, reencoded=True):
+def copy_metadata(source, dest, render, colour_model_preserved=True, reencoded=True,
+                  appearance=True):
     """Pass 1: copy everything the source knows, including an XMP sidecar.
 
     `osxphotos export --sidecar xmp` puts metadata next to the file rather than in
@@ -742,7 +743,9 @@ def copy_metadata(source, dest, render, colour_model_preserved=True, reencoded=T
         # The sidecar's caption is still the owner's words. Keep both rather than
         # letting the image copy erase it, but never rewrite a Description that
         # carries translated alternatives, because a bare write deletes them.
-        if sidecar_desc.strip() and sidecar_desc.strip() not in image_desc:
+        if not appearance:
+            pass  # --no-appearance-tags: captions are left exactly as copied
+        elif sidecar_desc.strip() and sidecar_desc.strip() not in image_desc:
             if xmp_description_has_alternates(dest):
                 extra_notes.append(
                     "the sidecar's caption was not merged: the output carries "
@@ -1168,6 +1171,7 @@ def main():
             copy_ok, copy_warn, sidecar_used, icc_warning, copy_notes = copy_metadata(
                 a.source, out_path, readable,
                 colour_model_preserved=colour_ok, reencoded=transcoded,
+                appearance=not a.no_appearance_tags,
             )
             if not copy_ok:
                 write_problems.append("exiftool could not copy metadata from the source")

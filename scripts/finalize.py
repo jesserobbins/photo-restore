@@ -160,13 +160,14 @@ def image_orientation(path):
     return "1"
 
 
-def decode_with_system(src, dst, target_format):
+def decode_with_system(src, dst):
     """Decode a format Pillow cannot read (HEIC) using a system tool.
 
-    The intermediate is lossless when the final container is lossless: decoding a
-    HEIC to JPEG only to write a PNG spends a generation for nothing.
+    The intermediate is always lossless. A JPEG intermediate would either be
+    delivered instead of our own encode (the byte-copy shortcut would match it) or
+    spend a lossy generation on the way to the target.
     """
-    fmt = "png" if target_format in ("png", "tiff") else "jpeg"
+    fmt = "png"
     if have("magick"):
         proc = run(["magick", str(src), "-colorspace", "sRGB", str(dst)])
         if proc.returncode == 0 and dst.exists():
@@ -193,8 +194,8 @@ def readable_render(render, workdir, target_format):
         pass
     if render.suffix.lower() not in HEIF_SUFFIXES:
         return render, None
-    dst = workdir / ("decoded.png" if target_format in ("png", "tiff") else "decoded.jpg")
-    tool = decode_with_system(render, dst, target_format)
+    dst = workdir / "decoded.png"
+    tool = decode_with_system(render, dst)
     if not tool:
         die(
             f"{render.name} is {render.suffix}, which Pillow cannot decode. Install "
@@ -590,7 +591,28 @@ def copy_metadata(source, dest, render, colour_model_preserved=True, reencoded=T
     it. Ignoring the sidecar silently drops captions and keywords that exist
     nowhere else, and verification cannot see the loss.
     """
-    ok, warn = exiftool_write(dest, ["-TagsFromFile", str(source), "-all:all", "-unsafe"])
+    # Precedence: the image is the record. The sidecar fills what the image does
+    # not have, so copying the sidecar first and the image second means a
+    # conflicting capture date resolves to the image's, not the sidecar's.
+    image_subjects = exiftool_read_list(source, "Subject")
+    sidecar = source.with_name(source.name + ".xmp")
+    # Read the sidecar's list before the copies: the image copy overwrites it, so
+    # the sidecar's values would otherwise be gone by merge time.
+    sidecar_subjects = exiftool_read_list(sidecar, "Subject") if sidecar.exists() else []
+    used = False
+    ok, warn = (True, "")
+    if sidecar.exists():
+        ok_s, warn_s = exiftool_write(
+            dest, ["-TagsFromFile", str(sidecar), "-all:all", "-unsafe"]
+        )
+        ok = ok and ok_s
+        warn = "\n".join(w for w in (warn, warn_s) if w)
+        used = True
+    ok_i, warn_i = exiftool_write(
+        dest, ["-TagsFromFile", str(source), "-all:all", "-unsafe"]
+    )
+    ok = ok and ok_i
+    warn = "\n".join(w for w in (warn, warn_i) if w)
 
     # The render's own ICC profile describes the render's pixels. Copying the
     # source's over it would relabel the colour space without converting it.
@@ -632,35 +654,16 @@ def copy_metadata(source, dest, render, colour_model_preserved=True, reencoded=T
                 "of its own, so the source profile would have mislabelled the output"
             )
 
-    sidecar = source.with_name(source.name + ".xmp")
-    used = False
     if sidecar.exists():
-        # A sidecar replaces list tags wholesale, so keep what the image had and
-        # union it with the sidecar's values instead of letting one win.
-        before_sub = exiftool_read_list(dest, "Subject")
-        before_desc = exiftool_read(dest, ["Description"]).get("Description") or ""
-        ok2, warn2 = exiftool_write(
-            dest, ["-TagsFromFile", str(sidecar), "-all:all", "-unsafe"]
-        )
-        after_sub = exiftool_read_list(dest, "Subject")
-        merged = merge_keywords(before_sub, after_sub)
-        if merged and merged != after_sub:
+        # List tags get replaced wholesale, so union the image's subjects with the
+        # sidecar's rather than letting whichever was copied last win.
+        current_sub = exiftool_read_list(dest, "Subject")
+        merged = merge_keywords(image_subjects, sidecar_subjects + current_sub)
+        if merged and merged != current_sub:
             args = ["-Subject="] + [f"-Subject+={kw}" for kw in merged]
             ok_m, warn_m = exiftool_write(dest, args)
             ok = ok and ok_m
             warn = "\n".join(w for w in (warn, warn_m) if w)
-        # A sidecar's Description replaces the embedded one; the embedded text is
-        # the owner's words, so it is preserved ahead of the sidecar's.
-        after_desc = exiftool_read(dest, ["Description"]).get("Description") or ""
-        if before_desc.strip() and before_desc.strip() not in after_desc:
-            ok_d, warn_d = exiftool_write(
-                dest, ["-Description=" + append_text(before_desc, after_desc)]
-            )
-            ok = ok and ok_d
-            warn = "\n".join(w for w in (warn, warn_d) if w)
-        ok = ok and ok2
-        warn = "\n".join(w for w in (warn, warn2) if w)
-        used = True
     return ok, warn, used, icc_note
 
 

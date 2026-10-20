@@ -803,9 +803,8 @@ def test_png_transcode_does_not_inherit_render_tags(tmp_path):
 
 
 def _have_heic():
-    if shutil.which("magick") is None and shutil.which("sips") is None:
-        return False
-    return True
+    # The fixture is written with ImageMagick, so sips alone is not enough.
+    return shutil.which("magick") is not None
 
 
 @pytestmark_needs_pillow
@@ -824,4 +823,15 @@ def test_heic_render_is_decoded_once_into_a_lossless_intermediate(tmp_path):
     entry = json.loads(r.stdout)
     assert entry["decoded_by"], "the system decoder should be recorded"
     assert entry["verification"] in ("pass", "degraded")
-    assert entry["format"] == "png"
+    # A PNG target must be reached from a lossless intermediate, so the pixels are
+    # copied, not re-encoded from a JPEG.
+    assert "pixels untouched" in entry["encode_detail"], entry["encode_detail"]
+    with Image.open(entry["output"]) as im:
+        assert im.format == "PNG"
+
+    # A JPEG target must still be encoded by us, never the decoder's default JPEG.
+    r2 = run_cli(src, heic, "--format", "jpeg", "--json", "--suffix", "_j")
+    assert r2.returncode == 0, r2.stderr
+    entry2 = json.loads(r2.stdout)
+    assert "pixels untouched" not in entry2["encode_detail"], \
+        "the decoder's JPEG was delivered instead of our encode"

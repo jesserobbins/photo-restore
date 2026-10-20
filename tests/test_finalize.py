@@ -976,3 +976,27 @@ def test_tiff_attribution_survives_the_pillow_only_path(tmp_path):
     got = subprocess.run(["exiftool", "-q", "-s3", "-Artist", entry["output"]],
                          capture_output=True, text=True).stdout.strip()
     assert got == "Jesse Robbins", f"attribution lost on the TIFF path: {got!r}"
+
+
+@pytestmark_needs_pillow
+def test_pagename_is_not_treated_as_structural(tmp_path):
+    """0x011D is PageName, not the predictor, and must survive."""
+    src = tmp_path / "s.tif"
+    Image.new("RGB", (60, 45), (80, 90, 100)).save(src)
+    subprocess.run(["exiftool", "-q", "-overwrite_original",
+                    "-PageName=Graduation portrait",
+                    "-DateTimeOriginal=1962:06:14 11:05:00", str(src)], check=True)
+    render = tmp_path / "r.jpg"
+    Image.new("RGB", (120, 90), (80, 90, 100)).save(render, quality=95)
+
+    env = dict(os.environ)
+    env["PATH"] = os.pathsep.join(
+        p for p in env.get("PATH", "").split(os.pathsep)
+        if not (Path(p) / "exiftool").exists()
+    )
+    r = run_cli(src, render, "--json", "--format", "jpeg", env=env)
+    assert r.returncode == 0, r.stderr
+    entry = json.loads(r.stdout)
+    got = subprocess.run(["exiftool", "-q", "-s3", "-PageName", entry["output"]],
+                         capture_output=True, text=True).stdout.strip()
+    assert got == "Graduation portrait", f"PageName lost: {got!r}"

@@ -127,6 +127,7 @@ def write_manifest(root, path, data, name_supplied=False):
             fh.write("\n")
         os.replace(tmp, path)
         fcntl.flock(lockfh, fcntl.LOCK_UN)
+    return data
 
 
 def _place_sidecar(sidecar, sidecar_dest):
@@ -258,7 +259,7 @@ def main():
             "verification result.",
         ],
     }
-    write_manifest(root, manifest_path, data, name_supplied=bool(a.name))
+    data = write_manifest(root, manifest_path, data, name_supplied=bool(a.name))
 
     readme = root / "README.md"
     if not readme.exists():

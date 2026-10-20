@@ -530,10 +530,15 @@ def source_embed(source, render, out_size, target_format):
                 # and Copyright (0x8298) are the owner's descriptive record and
                 # stay; so do PageName and Software. 0x011D is PageName, not the
                 # predictor (that is 0x013D), and must not be dropped.
+                # 0x8773 is ICCProfile and 0x02BC is XMP: both are handled
+                # separately (ICC is chosen by pixel mode, XMP would carry stale
+                # orientation and dimensions), and Pillow's TIFF writer restores
+                # them from the blob if they are left in.
                 for structural in (0x0100, 0x0101, 0x0102, 0x0103, 0x0106,
                                    0x0111, 0x0115, 0x0116, 0x0117, 0x011C,
                                    0x011E, 0x011F,
-                                   0x0142, 0x0143, 0x0144, 0x0145):
+                                   0x0142, 0x0143, 0x0144, 0x0145,
+                                   0x8773, 0x02BC):
                     exif.pop(structural, None)
                 exif[274] = 1  # pixels are baked upright by the time this is attached
                 sub = exif.get_ifd(0x8769)
@@ -575,7 +580,7 @@ def encode(render, target_format, workdir, quality, embed=None, transcode=False)
             # unstripped file would carry the render's camera, location, caption
             # and processing date as if they were the photograph's.
             die(f"could not strip the render's metadata, nothing was written: {warn_strip}")
-        return out, False, "pixels untouched; render metadata stripped", True
+        return out, False, "pixels untouched; render metadata stripped", True, None
 
     out = workdir / f"stage{FORMAT_EXT[target_format]}"
     from PIL import Image, ImageOps
@@ -585,6 +590,7 @@ def encode(render, target_format, workdir, quality, embed=None, transcode=False)
     save_kw = dict(embed or {})
     colour_model_preserved = True
     render_mode = ""
+    depth_note = None
     with Image.open(staged) as im:
         render_mode = im.mode
         # Only a conversion that changes colour space invalidates the profile.
@@ -600,6 +606,10 @@ def encode(render, target_format, workdir, quality, embed=None, transcode=False)
             # and 32-bit is refused because any mapping would guess a black point.
             if im.mode.startswith("I;16"):
                 im = im.convert("I").point(lambda v: v / 256.0).convert("L")
+                depth_note = (
+                    "16-bit render reduced to 8 bits: Pillow cannot write a "
+                    "16-bit mode through this path"
+                )
             else:
                 die(
                     f"the render is 32-bit {im.mode} data. Keep it with "
@@ -638,7 +648,9 @@ def encode(render, target_format, workdir, quality, embed=None, transcode=False)
     detail = f"{render_fmt} -> {target_format}"
     if transcode:
         detail += " (orientation baked)"
-    return out, True, detail, colour_model_preserved
+    if depth_note:
+        detail += f" ({depth_note})"
+    return out, True, detail, colour_model_preserved, depth_note
 
 
 def copy_metadata(source, dest, render, colour_model_preserved=True, reencoded=True):
@@ -1034,8 +1046,6 @@ def main():
     if src_display is None:
         die(f"Could not read dimensions of {a.source}")
     src_state = expected_source_state(a.source, use_exiftool)
-    src_orientation = (src_state.get("Orientation#")
-                       or image_orientation(a.source) or "1")
 
     render_display = displayed_size(a.render)
     if render_display is None:
@@ -1136,7 +1146,7 @@ def main():
         # an undated source would inherit the render's processing date.
         transcode = render_orientation not in ("1", "0") or not use_exiftool
         try:
-            staged, transcoded, encode_note, colour_ok = encode(
+            staged, transcoded, encode_note, colour_ok, depth_note = encode(
                 readable, target_format, workdir, a.quality, embed=embed,
                 transcode=transcode,
             )
@@ -1175,6 +1185,8 @@ def main():
         if icc_warning:
             report["shortfalls"].append(icc_warning)
         report["shortfalls"].extend(copy_notes)
+        if depth_note:
+            report["shortfalls"].append(depth_note)
         if status == "pass" and report["shortfalls"]:
             # A known preservation shortfall is a degraded result, not a pass.
             status = "degraded"

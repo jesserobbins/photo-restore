@@ -184,3 +184,15 @@ def test_rescaffold_keeps_previous_name_and_notes(tmp_path):
     third = run_cli(proj, "--force", "--name", "New label")
     assert third.returncode == 0, third.stderr
     assert json.loads((proj / "manifest.json").read_text())["name"] == "New label"
+
+
+def test_regenerated_readme_uses_the_stored_label(tmp_path):
+    src = make_image(tmp_path / "a.jpg")
+    proj = tmp_path / "p"
+    run_cli(proj, "--name", "Grandma portrait", "--source", src)
+    (proj / "README.md").unlink()
+
+    r = run_cli(proj, "--force")
+    assert r.returncode == 0, r.stderr
+    readme = (proj / "README.md").read_text()
+    assert "Grandma portrait" in readme, "README regenerated from the directory name"

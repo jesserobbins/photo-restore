@@ -102,16 +102,21 @@ def write_manifest(root, path, data):
         fcntl.flock(lockfh, fcntl.LOCK_EX)
         current = read_manifest(path)
         if current:
-            # Recompute against what is on disk now, not what we read earlier.
-            data["assets"] = current.get("assets", data.get("assets", []))
-            data["sources"] = merge_list(current.get("sources"), data.get("sources"))
-            data["masters"] = merge_list(current.get("masters"), data.get("masters"))
+            # Start from what is on disk now, so fields this run does not compute
+            # (the finalizer's `updated`, for one) are not reverted. Then overlay
+            # only what this run owns.
+            merged = dict(current)
+            merged.update({k: v for k, v in data.items() if k not in ("assets",)})
+            merged["assets"] = current.get("assets", data.get("assets", []))
+            merged["sources"] = merge_list(current.get("sources"), data.get("sources"))
+            merged["masters"] = merge_list(current.get("masters"), data.get("masters"))
             prev_refs = current.get("references") or {}
             for role in ("face", "body"):
-                data["references"][role] = merge_list(
-                    prev_refs.get(role), data["references"].get(role)
+                merged["references"][role] = merge_list(
+                    prev_refs.get(role), (data["references"] or {}).get(role)
                 )
-            data["created"] = current.get("created") or data.get("created")
+            merged["created"] = current.get("created") or data.get("created")
+            data = merged
         fd, tmp = tempfile.mkstemp(dir=root, prefix=".manifest-", suffix=".json")
         with os.fdopen(fd, "w") as fh:
             json.dump(data, fh, indent=2)

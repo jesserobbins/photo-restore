@@ -506,10 +506,12 @@ def source_embed(source, render, out_size, target_format):
                 # compression, and an ImageWidth describing the *source*. Those
                 # point at pixels the output does not contain, so they are dropped
                 # rather than embedded as false claims.
+                # Structural only: pixel layout, strips, tiles. Artist (0x013B)
+                # and Copyright (0x8298) are the owner's descriptive record and
+                # stay; Software and ModifyDate are likewise kept.
                 for structural in (0x0100, 0x0101, 0x0102, 0x0103, 0x0106,
                                    0x0111, 0x0115, 0x0116, 0x0117, 0x011C,
-                                   0x011D, 0x011E, 0x011F, 0x0128,
-                                   0x0131, 0x0132, 0x013B, 0x8298):
+                                   0x011D, 0x011E, 0x011F):
                     exif.pop(structural, None)
                 exif[274] = 1  # pixels are baked upright by the time this is attached
                 sub = exif.get_ifd(0x8769)
@@ -637,6 +639,7 @@ def copy_metadata(source, dest, render, colour_model_preserved=True, reencoded=T
     sidecar_subjects = exiftool_read_list(sidecar, "Subject") if sidecar.exists() else []
     used = False
     ok, warn = (True, "")
+    extra_notes = []
     if sidecar.exists():
         ok_s, warn_s = exiftool_write(
             dest, ["-TagsFromFile", str(sidecar), "-all:all", "-unsafe"]
@@ -707,18 +710,17 @@ def copy_metadata(source, dest, render, colour_model_preserved=True, reencoded=T
         # carries translated alternatives, because a bare write deletes them.
         if sidecar_desc.strip() and sidecar_desc.strip() not in image_desc:
             if xmp_description_has_alternates(dest):
-                warn = "\n".join(w for w in (
-                    warn,
-                    "sidecar caption not merged: the output carries translated "
-                    "XMP descriptions that a plain rewrite would delete",
-                ) if w)
+                extra_notes.append(
+                    "the sidecar's caption was not merged: the output carries "
+                    "translated XMP descriptions that a plain rewrite would delete"
+                )
             else:
                 args.append(f"-Description={append_text(image_desc, sidecar_desc)}")
         if args:
             ok_d, warn_d = exiftool_write(dest, args)
             ok = ok and ok_d
             warn = "\n".join(w for w in (warn, warn_d) if w)
-    return ok, warn, used, icc_note
+    return ok, warn, used, icc_note, extra_notes
 
 
 def correct_metadata(dest, out_size, note, keywords, appearance=True):
@@ -1088,9 +1090,12 @@ def main():
         out_dir.mkdir(parents=True, exist_ok=True)
     except OSError as exc:
         die(f"cannot use the output directory {out_dir}: {exc}")
-    out_path, reserved_new = reserve_destination(
-        out_dir, a.source.stem, a.suffix, ext, a.force
-    )
+    try:
+        out_path, reserved_new = reserve_destination(
+            out_dir, a.source.stem, a.suffix, ext, a.force
+        )
+    except OSError as exc:
+        die(f"cannot reserve an output file in {out_dir}: {exc}")
     plan["output"] = str(out_path)
     published = False
     workdir = None
@@ -1129,9 +1134,10 @@ def main():
         write_problems = []
         copy_warn = ""
         icc_warning = None
+        copy_notes = []
         sidecar_used = False
         if use_exiftool:
-            copy_ok, copy_warn, sidecar_used, icc_warning = copy_metadata(
+            copy_ok, copy_warn, sidecar_used, icc_warning, copy_notes = copy_metadata(
                 a.source, out_path, readable,
                 colour_model_preserved=colour_ok, reencoded=transcoded,
             )
@@ -1150,6 +1156,7 @@ def main():
         report["shortfalls"].extend(embed_notes)
         if icc_warning:
             report["shortfalls"].append(icc_warning)
+        report["shortfalls"].extend(copy_notes)
         if status == "pass" and report["shortfalls"]:
             # A known preservation shortfall is a degraded result, not a pass.
             status = "degraded"
@@ -1239,6 +1246,8 @@ def main():
                 print("\nThe following could not be preserved. Say so when delivering.")
 
         return 1 if status == "fail" else 0
+    except OSError as exc:
+        die(f"filesystem error while writing the output: {exc}")
     finally:
         if workdir is not None:
             shutil.rmtree(workdir, ignore_errors=True)

@@ -914,3 +914,21 @@ def test_cross_group_date_disagreement_is_reported_not_rewritten(tmp_path):
     entry = json.loads(r.stdout)
     assert any("disagree" in s for s in entry["verification_detail"]["shortfalls"]), \
         entry["verification_detail"]
+
+
+@pytestmark_needs_pillow
+def test_unwritable_output_dir_exits_2(tmp_path):
+    """An environment failure must not masquerade as a verification failure."""
+    if os.geteuid() == 0:
+        pytest.skip("permissions are not enforced for root")
+    src = make_jpeg(tmp_path / "s.jpg")
+    render = make_jpeg(tmp_path / "r.jpg", size=(120, 90), tags=False)
+    locked = tmp_path / "locked"
+    locked.mkdir()
+    locked.chmod(0o500)
+    try:
+        r = run_cli(src, render, "--out-dir", locked)
+        assert r.returncode == 2, r.stdout + r.stderr
+        assert "Traceback" not in r.stderr
+    finally:
+        locked.chmod(0o700)

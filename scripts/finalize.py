@@ -160,17 +160,48 @@ def image_orientation(path):
     return "1"
 
 
-def decode_to_jpeg(src, dst):
-    """Decode a format Pillow cannot read (HEIC) using a system tool."""
+def decode_with_system(src, dst, target_format):
+    """Decode a format Pillow cannot read (HEIC) using a system tool.
+
+    The intermediate is lossless when the final container is lossless: decoding a
+    HEIC to JPEG only to write a PNG spends a generation for nothing.
+    """
+    fmt = "png" if target_format in ("png", "tiff") else "jpeg"
     if have("magick"):
         proc = run(["magick", str(src), "-colorspace", "sRGB", str(dst)])
         if proc.returncode == 0 and dst.exists():
             return "magick"
     if have("sips"):
-        proc = run(["sips", "-s", "format", "jpeg", str(src), "--out", str(dst)])
+        proc = run(["sips", "-s", "format", fmt, str(src), "--out", str(dst)])
         if proc.returncode == 0 and dst.exists():
             return "sips"
     return None
+
+
+def readable_render(render, workdir, target_format):
+    """A path Pillow can open for the render, decoding once if it must.
+
+    Every reader downstream (metadata, ICC, encode) then works from the same file,
+    so a HEIC render cannot lose its profile to one code path and keep it in
+    another.
+    """
+    try:
+        from PIL import Image
+        with Image.open(render):
+            return render, None
+    except Exception:
+        pass
+    if render.suffix.lower() not in HEIF_SUFFIXES:
+        return render, None
+    dst = workdir / ("decoded.png" if target_format in ("png", "tiff") else "decoded.jpg")
+    tool = decode_with_system(render, dst, target_format)
+    if not tool:
+        die(
+            f"{render.name} is {render.suffix}, which Pillow cannot decode. Install "
+            "ImageMagick or use macOS sips, or export the photo as JPEG first. "
+            "Refusing to write pixels from a file I could not read."
+        )
+    return dst, tool
 
 
 # --------------------------------------------------------------------------- #
@@ -492,16 +523,6 @@ def encode(render, target_format, workdir, quality, embed=None, transcode=False)
     from PIL import Image, ImageOps
 
     staged = render
-    decoder = None
-    if render_fmt in HEIF_SUFFIXES:
-        staged = workdir / "decoded.jpg"
-        decoder = decode_to_jpeg(render, staged)
-        if not decoder:
-            die(
-                f"{render.name} is {render_fmt}, which Pillow cannot decode. "
-                "Install ImageMagick or use macOS sips, or export the photo as "
-                "JPEG first. Refusing to write pixels from a file I could not read."
-            )
 
     save_kw = dict(embed or {})
     colour_model_preserved = True
@@ -557,8 +578,6 @@ def encode(render, target_format, workdir, quality, embed=None, transcode=False)
             die(f"could not strip the render's metadata, nothing was written: {warn_strip}")
 
     detail = f"{render_fmt} -> {target_format}"
-    if decoder:
-        detail += f" (decoded by {decoder})"
     if transcode:
         detail += " (orientation baked)"
     return out, True, detail, colour_model_preserved
@@ -1007,18 +1026,23 @@ def main():
         # and an external or archival drive is exactly where these go. Creation is
         # inside the try so a failure still releases the reservation.
         workdir = Path(tempfile.mkdtemp(dir=out_dir, prefix=".finalize-"))
+        # Decode once. Metadata, ICC and the encode all read the same file, so a
+        # HEIC render cannot lose its profile in one path and keep it in another.
+        readable, decoder = readable_render(a.render, workdir, target_format)
+        plan["decoded_by"] = decoder
         # Without exiftool there is no way to merge tags, so the source's EXIF is
         # embedded during the single save instead. One encode, never read-then-
         # rewrite the same path.
         embed, embed_notes = (None, []) if use_exiftool else source_embed(
-            a.source, a.render, render_display, target_format
+            a.source, readable, render_display, target_format
         )
         # Without exiftool the render's own tags must never survive untouched:
         # an undated source would inherit the render's processing date.
         transcode = render_orientation not in ("1", "0") or not use_exiftool
         try:
             staged, transcoded, encode_note, colour_ok = encode(
-                a.render, target_format, workdir, a.quality, embed=embed, transcode=transcode
+                readable, target_format, workdir, a.quality, embed=embed,
+                transcode=transcode,
             )
         except SystemExit:
             raise
@@ -1035,7 +1059,7 @@ def main():
         sidecar_used = False
         if use_exiftool:
             copy_ok, copy_warn, sidecar_used, icc_warning = copy_metadata(
-                a.source, out_path, a.render,
+                a.source, out_path, readable,
                 colour_model_preserved=colour_ok, reencoded=transcoded,
             )
             if not copy_ok:
@@ -1079,6 +1103,7 @@ def main():
             "source": str(a.source),
             "source_size": list(src_display),
             "render": str(a.render),
+            "decoded_by": decoder,
             "render_orientation": render_orientation,
             "output": str(out_path),
             "format": target_format,

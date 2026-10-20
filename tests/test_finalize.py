@@ -800,3 +800,28 @@ def test_png_transcode_does_not_inherit_render_tags(tmp_path):
                           str(tmp_path / "s_upscale.png")],
                          capture_output=True, text=True).stdout.strip()
     assert got == "", f"render EXIF survived the transcode ({got!r})"
+
+
+def _have_heic():
+    if shutil.which("magick") is None and shutil.which("sips") is None:
+        return False
+    return True
+
+
+@pytestmark_needs_pillow
+@pytest.mark.skipif(not _have_heic(), reason="needs ImageMagick or sips to write HEIC")
+def test_heic_render_is_decoded_once_into_a_lossless_intermediate(tmp_path):
+    """A lossless target must not be reached through a lossy JPEG intermediate."""
+    src = make_jpeg(tmp_path / "s.jpg", size=(60, 45))
+    render_jpg = make_jpeg(tmp_path / "r.jpg", size=(120, 90), tags=False)
+    heic = tmp_path / "r.heic"
+    if subprocess.run(["magick", str(render_jpg), str(heic)],
+                      capture_output=True).returncode != 0 or not heic.exists():
+        pytest.skip("this ImageMagick build cannot write HEIC")
+
+    r = run_cli(src, heic, "--format", "png", "--json")
+    assert r.returncode == 0, r.stdout + r.stderr
+    entry = json.loads(r.stdout)
+    assert entry["decoded_by"], "the system decoder should be recorded"
+    assert entry["verification"] in ("pass", "degraded")
+    assert entry["format"] == "png"

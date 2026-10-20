@@ -133,7 +133,11 @@ def _place_sidecar(sidecar, sidecar_dest):
             )
         return
     os.close(fd)
-    shutil.copyfile(sidecar, sidecar_dest)
+    try:
+        shutil.copyfile(sidecar, sidecar_dest)
+    except Exception:
+        sidecar_dest.unlink(missing_ok=True)
+        raise
 
 
 def merge_list(old, new):

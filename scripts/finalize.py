@@ -319,6 +319,21 @@ def merge_keywords(existing, new):
     return out
 
 
+def xmp_description_has_alternates(path):
+    """Does the file carry translated XMP descriptions as well as the default?"""
+    proc = run(["exiftool", "-q", "-q", "-json", "-XMP-dc:Description", str(path)])
+    if proc.returncode != 0 or not proc.stdout.strip():
+        return False
+    try:
+        data = json.loads(proc.stdout)
+    except ValueError:
+        return False
+    if not data:
+        return False
+    value = data[0].get("Description")
+    return isinstance(value, dict) and len(value) > 1
+
+
 def exiftool_read_list(path, tag):
     """Read a list tag as a real list.
 
@@ -475,9 +490,14 @@ def source_embed(source, render, out_size, target_format):
     try:
         from PIL import Image
         with Image.open(source) as src:
-            if src.info.get("exif"):
+            # TIFF keeps its tags in the IFD, not in an info["exif"] blob, so a
+            # Pillow-only run would otherwise carry nothing from a TIFF source and
+            # then be quarantined for losing what verification could still read.
+            blob = src.info.get("exif") or (src.getexif().tobytes()
+                                            if src.getexif() else None)
+            if blob:
                 exif = Image.Exif()
-                exif.load(src.info["exif"])
+                exif.load(blob)
                 exif[274] = 1  # pixels are baked upright by the time this is attached
                 sub = exif.get_ifd(0x8769)
                 try:
@@ -596,7 +616,10 @@ def copy_metadata(source, dest, render, colour_model_preserved=True, reencoded=T
     # conflicting capture date resolves to the image's, not the sidecar's.
     image_subjects = exiftool_read_list(source, "Subject")
     image_desc = exiftool_read(source, ["Description"]).get("Description") or ""
-    image_dates = exiftool_read(source, ["DateTimeOriginal", "CreateDate"])
+    image_dates = exiftool_read(
+        source, ["DateTimeOriginal", "CreateDate",
+                 "XMP-exif:DateTimeOriginal", "XMP-xmp:CreateDate"],
+    )
     sidecar = source.with_name(source.name + ".xmp")
     sidecar_desc = (exiftool_read(sidecar, ["Description"]).get("Description") or ""
                     if sidecar.exists() else "")
@@ -664,16 +687,31 @@ def copy_metadata(source, dest, render, colour_model_preserved=True, reencoded=T
         # and XMP-preferring readers use the wrong date. Write the image's values
         # into both groups.
         args = []
-        if image_dates.get("DateTimeOriginal"):
-            args += [f"-DateTimeOriginal={image_dates['DateTimeOriginal']}",
-                     f"-XMP-exif:DateTimeOriginal={image_dates['DateTimeOriginal']}"]
-        if image_dates.get("CreateDate"):
-            args += [f"-CreateDate={image_dates['CreateDate']}",
-                     f"-XMP-xmp:CreateDate={image_dates['CreateDate']}"]
+        # Each group is resolved from the image's own value for that group, so a
+        # precise XMP timestamp is never replaced by a seconds-only EXIF copy. When
+        # the image has no value for a group, that group is cleared rather than
+        # filled with a lower-precision stand-in: readers then fall back to the
+        # group that does hold the record.
+        # Only resolve groups when the image records a date at all. If the date
+        # exists solely in the sidecar, that *is* the record and must be kept.
+        if any(image_dates.get(k) for k in image_dates):
+            for group_tag in ("DateTimeOriginal", "CreateDate",
+                              "XMP-exif:DateTimeOriginal", "XMP-xmp:CreateDate"):
+                value = image_dates.get(group_tag)
+                args.append(f"-{group_tag}={value}" if value else f"-{group_tag}=")
         # The sidecar's caption is still the owner's words; keep both rather than
-        # letting the image copy erase it.
+        # letting the image copy erase it. Writing an XMP Description without a
+        # language suffix would drop translations, so skip the rewrite when the
+        # output carries more than the default language.
         if sidecar_desc.strip() and sidecar_desc.strip() not in image_desc:
-            args.append(f"-Description={append_text(image_desc, sidecar_desc)}")
+            if xmp_description_has_alternates(dest):
+                warn = "\n".join(w for w in (
+                    warn,
+                    "sidecar caption not merged: the output carries translated "
+                    "XMP descriptions that a plain rewrite would delete",
+                ) if w)
+            else:
+                args.append(f"-Description={append_text(image_desc, sidecar_desc)}")
         if args:
             ok_d, warn_d = exiftool_write(dest, args)
             ok = ok and ok_d

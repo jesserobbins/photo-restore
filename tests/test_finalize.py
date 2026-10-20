@@ -854,10 +854,14 @@ def test_image_wins_a_conflicting_capture_date_across_groups(tmp_path):
     r = run_cli(src, render, "--json")
     assert r.returncode == 0, r.stdout + r.stderr
     entry = json.loads(r.stdout)
-    for tag in ("-CreateDate", "-XMP-xmp:CreateDate"):
+    # Every group must either carry the image's date or be empty. What must never
+    # happen is the sidecar's date standing in for the image's in any group.
+    for tag in ("-CreateDate", "-XMP-xmp:CreateDate",
+                "-DateTimeOriginal", "-XMP-exif:DateTimeOriginal"):
         got = subprocess.run(["exiftool", "-q", "-s3", tag, entry["output"]],
                              capture_output=True, text=True).stdout.strip()
-        assert got.startswith("1962"), f"{tag} took the sidecar's value: {got!r}"
+        assert not got.startswith("2026"), f"{tag} took the sidecar's value: {got!r}"
+        assert got == "" or got.startswith("1962"), f"{tag} holds {got!r}"
 
 
 @pytestmark_needs_pillow

@@ -168,11 +168,19 @@ def test_differing_sidecar_is_refused_not_overwritten(tmp_path):
 def test_rescaffold_keeps_previous_name_and_notes(tmp_path):
     src = make_image(tmp_path / "a.jpg")
     proj = tmp_path / "p"
-    run_cli(proj, "--name", "Grandma portrait", "--source", src)
+    first = run_cli(proj, "--name", "Grandma portrait", "--source", src)
+    assert first.returncode == 0, first.stderr
     before = json.loads((proj / "manifest.json").read_text())
 
     extra = make_image(tmp_path / "face.jpg")
-    run_cli(proj, "--force", "--face", extra)
+    second = run_cli(proj, "--force", "--face", extra)
+    assert second.returncode == 0, second.stderr
     after = json.loads((proj / "manifest.json").read_text())
     assert after["name"] == "Grandma portrait", "re-scaffolding reset the label"
     assert after["notes"] == before["notes"], "re-scaffolding reset the notes"
+    assert after["references"]["face"] == ["refs/face/face.jpg"], "the second run did nothing"
+
+    # An explicitly supplied label must still win over the stored one.
+    third = run_cli(proj, "--force", "--name", "New label")
+    assert third.returncode == 0, third.stderr
+    assert json.loads((proj / "manifest.json").read_text())["name"] == "New label"

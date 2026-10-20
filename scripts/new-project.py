@@ -230,7 +230,7 @@ def main():
 
     data = {
         "schema": SCHEMA,
-        "name": previous.get("name") or name,
+        "name": a.name or previous.get("name") or name,
         "created": previous.get("created") or datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "tool": "photo-restore 2.0",
         "sources": merge_list(previous.get("sources"), placed_source),

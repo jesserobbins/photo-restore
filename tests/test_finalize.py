@@ -882,3 +882,35 @@ def test_sidecar_caption_is_not_erased_by_the_image_copy(tmp_path):
                           str(tmp_path / "s_upscale.jpg")],
                          capture_output=True, text=True).stdout
     assert "From the image" in got and "From the sidecar" in got, got
+
+
+@pytestmark_needs_pillow
+def test_translated_captions_are_not_deleted(tmp_path):
+    """A bare Description write deletes language alternatives."""
+    src = make_jpeg(tmp_path / "s.jpg")
+    subprocess.run(["exiftool", "-q", "-overwrite_original",
+                    "-Description=Default caption",
+                    "-Description-fr=Legende par defaut", str(src)], check=True)
+    render = make_jpeg(tmp_path / "r.jpg", size=(120, 90), tags=False)
+
+    r = run_cli(src, render)
+    assert r.returncode == 0, r.stdout + r.stderr
+    got = subprocess.run(["exiftool", "-q", "-s3", "-XMP-dc:Description-fr",
+                          str(tmp_path / "s_upscale.jpg")],
+                         capture_output=True, text=True).stdout.strip()
+    assert got == "Legende par defaut", f"translated caption lost: {got!r}"
+
+
+@pytestmark_needs_pillow
+def test_cross_group_date_disagreement_is_reported_not_rewritten(tmp_path):
+    """Reconciling groups loses precision or sidecar-only dates; reporting is honest."""
+    src = make_jpeg(tmp_path / "s.jpg")
+    subprocess.run(["exiftool", "-q", "-overwrite_original",
+                    "-XMP-exif:DateTimeOriginal=2026:01:01 00:00:00", str(src)], check=True)
+    render = make_jpeg(tmp_path / "r.jpg", size=(120, 90), tags=False)
+
+    r = run_cli(src, render, "--json")
+    assert r.returncode == 0, r.stdout + r.stderr
+    entry = json.loads(r.stdout)
+    assert any("disagree" in s for s in entry["verification_detail"]["shortfalls"]), \
+        entry["verification_detail"]

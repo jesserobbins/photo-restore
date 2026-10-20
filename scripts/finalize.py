@@ -320,8 +320,13 @@ def merge_keywords(existing, new):
 
 
 def xmp_description_has_alternates(path):
-    """Does the file carry translated XMP descriptions as well as the default?"""
-    proc = run(["exiftool", "-q", "-q", "-json", "-XMP-dc:Description", str(path)])
+    """Does the file carry translated XMP descriptions as well as the default?
+
+    Language alternatives are separate tags (`Description-fr`), not a dict, and
+    writing a bare Description deletes them. Tag names, not values, are what to
+    look at.
+    """
+    proc = run(["exiftool", "-q", "-q", "-json", "-XMP-dc:all", str(path)])
     if proc.returncode != 0 or not proc.stdout.strip():
         return False
     try:
@@ -330,8 +335,7 @@ def xmp_description_has_alternates(path):
         return False
     if not data:
         return False
-    value = data[0].get("Description")
-    return isinstance(value, dict) and len(value) > 1
+    return any(k.startswith("Description-") for k in data[0])
 
 
 def exiftool_read_list(path, tag):
@@ -498,6 +502,15 @@ def source_embed(source, render, out_size, target_format):
             if blob:
                 exif = Image.Exif()
                 exif.load(blob)
+                # A TIFF source's IFD carries structural tags -- strip offsets,
+                # compression, and an ImageWidth describing the *source*. Those
+                # point at pixels the output does not contain, so they are dropped
+                # rather than embedded as false claims.
+                for structural in (0x0100, 0x0101, 0x0102, 0x0103, 0x0106,
+                                   0x0111, 0x0115, 0x0116, 0x0117, 0x011C,
+                                   0x011D, 0x011E, 0x011F, 0x0128,
+                                   0x0131, 0x0132, 0x013B, 0x8298):
+                    exif.pop(structural, None)
                 exif[274] = 1  # pixels are baked upright by the time this is attached
                 sub = exif.get_ifd(0x8769)
                 try:
@@ -616,10 +629,6 @@ def copy_metadata(source, dest, render, colour_model_preserved=True, reencoded=T
     # conflicting capture date resolves to the image's, not the sidecar's.
     image_subjects = exiftool_read_list(source, "Subject")
     image_desc = exiftool_read(source, ["Description"]).get("Description") or ""
-    image_dates = exiftool_read(
-        source, ["DateTimeOriginal", "CreateDate",
-                 "XMP-exif:DateTimeOriginal", "XMP-xmp:CreateDate"],
-    )
     sidecar = source.with_name(source.name + ".xmp")
     sidecar_desc = (exiftool_read(sidecar, ["Description"]).get("Description") or ""
                     if sidecar.exists() else "")
@@ -682,27 +691,20 @@ def copy_metadata(source, dest, render, colour_model_preserved=True, reencoded=T
             )
 
     if sidecar.exists():
-        # "Image wins" only holds within a group: copying EXIF does not overwrite
-        # XMP, so a sidecar's XMP CreateDate survives beside the image's EXIF one
-        # and XMP-preferring readers use the wrong date. Write the image's values
-        # into both groups.
+        # Groups are NOT reconciled. Clearing a group the image lacks deletes a
+        # date that exists only in the sidecar, and rewriting one to match replaces
+        # a precise XMP timestamp with a seconds-only EXIF copy. A disagreement
+        # between groups is reported by verify() instead of being silently "fixed".
         args = []
-        # Each group is resolved from the image's own value for that group, so a
-        # precise XMP timestamp is never replaced by a seconds-only EXIF copy. When
-        # the image has no value for a group, that group is cleared rather than
-        # filled with a lower-precision stand-in: readers then fall back to the
-        # group that does hold the record.
-        # Only resolve groups when the image records a date at all. If the date
-        # exists solely in the sidecar, that *is* the record and must be kept.
-        if any(image_dates.get(k) for k in image_dates):
-            for group_tag in ("DateTimeOriginal", "CreateDate",
-                              "XMP-exif:DateTimeOriginal", "XMP-xmp:CreateDate"):
-                value = image_dates.get(group_tag)
-                args.append(f"-{group_tag}={value}" if value else f"-{group_tag}=")
-        # The sidecar's caption is still the owner's words; keep both rather than
-        # letting the image copy erase it. Writing an XMP Description without a
-        # language suffix would drop translations, so skip the rewrite when the
-        # output carries more than the default language.
+        # List tags get replaced wholesale, so union the image's subjects with the
+        # sidecar's rather than letting whichever was copied last win.
+        current_sub = exiftool_read_list(dest, "Subject")
+        merged = merge_keywords(image_subjects, sidecar_subjects + current_sub)
+        if merged and merged != current_sub:
+            args += [f"-Subject={merged[0]}"] + [f"-Subject+={kw}" for kw in merged[1:]]
+        # The sidecar's caption is still the owner's words. Keep both rather than
+        # letting the image copy erase it, but never rewrite a Description that
+        # carries translated alternatives, because a bare write deletes them.
         if sidecar_desc.strip() and sidecar_desc.strip() not in image_desc:
             if xmp_description_has_alternates(dest):
                 warn = "\n".join(w for w in (
@@ -716,15 +718,6 @@ def copy_metadata(source, dest, render, colour_model_preserved=True, reencoded=T
             ok_d, warn_d = exiftool_write(dest, args)
             ok = ok and ok_d
             warn = "\n".join(w for w in (warn, warn_d) if w)
-        # List tags get replaced wholesale, so union the image's subjects with the
-        # sidecar's rather than letting whichever was copied last win.
-        current_sub = exiftool_read_list(dest, "Subject")
-        merged = merge_keywords(image_subjects, sidecar_subjects + current_sub)
-        if merged and merged != current_sub:
-            args = ["-Subject="] + [f"-Subject+={kw}" for kw in merged]
-            ok_m, warn_m = exiftool_write(dest, args)
-            ok = ok and ok_m
-            warn = "\n".join(w for w in (warn, warn_m) if w)
     return ok, warn, used, icc_note
 
 
@@ -773,7 +766,11 @@ def correct_metadata(dest, out_size, note, keywords, appearance=True):
         seed = current.get("Description") or current.get("Caption-Abstract")
         desc = append_text(seed, note)
         args.append(f"-Caption-Abstract={caption}")
-        args.append(f"-XMP-dc:Description={desc}")
+        # Writing a bare Description deletes translated alternatives, so it is
+        # left alone when they exist. The provenance still lands in the caption,
+        # UserComment and history.
+        if not xmp_description_has_alternates(dest):
+            args.append(f"-XMP-dc:Description={desc}")
 
     return exiftool_write(dest, args)
 
@@ -862,6 +859,15 @@ def verify(source, dest, source_state, out_size, note, use_exiftool,
             shortfalls.append("Software not written")
         if not exiftool_read(dest, ["HistorySoftwareAgent"]).get("HistorySoftwareAgent"):
             shortfalls.append("no XMP-xmpMM:History event was recorded")
+        for exif_tag, xmp_tag in (("DateTimeOriginal", "XMP-exif:DateTimeOriginal"),
+                                  ("CreateDate", "XMP-xmp:CreateDate")):
+            a_val = exiftool_read(dest, [exif_tag]).get(exif_tag)
+            b_val = exiftool_read(dest, [xmp_tag]).get(xmp_tag)
+            if a_val and b_val and a_val[:19] != b_val[:19]:
+                shortfalls.append(
+                    f"{exif_tag} and {xmp_tag} disagree ({a_val!r} vs {b_val!r}); "
+                    "readers that prefer XMP will use the second"
+                )
         for stale in ("ThumbnailImage", "PreviewImage"):
             if exiftool_read(dest, [stale]).get(stale):
                 problems.append(
@@ -1078,7 +1084,10 @@ def main():
         print(json.dumps(plan, indent=2) if a.json else "\n".join(f"{k}: {v}" for k, v in plan.items()))
         return 0
 
-    out_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        out_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        die(f"cannot use the output directory {out_dir}: {exc}")
     out_path, reserved_new = reserve_destination(
         out_dir, a.source.stem, a.suffix, ext, a.force
     )

@@ -255,8 +255,10 @@ def main():
     if not readme.exists():
         # --force means "add to this project", not "discard my notes". A generated
         # README may have been edited into a working document.
+        # Use the label the manifest resolved, not the raw directory name, or the
+        # README and manifest disagree.
         readme.write_text(
-            README.format(name=name, date=datetime.now().strftime("%Y-%m-%d"))
+            README.format(name=data["name"], date=datetime.now().strftime("%Y-%m-%d"))
         )
 
     missing = []

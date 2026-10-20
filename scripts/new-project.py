@@ -89,7 +89,7 @@ def read_manifest(path):
     return json.loads(path.read_text())
 
 
-def write_manifest(root, path, data):
+def write_manifest(root, path, data, name_supplied=False):
     """Merge under the same lock finalize.py uses.
 
     Without the lock, a finalize run that appends an asset between this read and
@@ -115,6 +115,10 @@ def write_manifest(root, path, data):
                 merged["references"][role] = merge_list(
                     prev_refs.get(role), (data["references"] or {}).get(role)
                 )
+            # Only this run's explicit --name may replace a stored label; a
+            # concurrent run that did not supply one must not revert a rename.
+            if not name_supplied:
+                merged["name"] = current.get("name") or data.get("name")
             merged["created"] = current.get("created") or data.get("created")
             data = merged
         fd, tmp = tempfile.mkstemp(dir=root, prefix=".manifest-", suffix=".json")
@@ -254,7 +258,7 @@ def main():
             "verification result.",
         ],
     }
-    write_manifest(root, manifest_path, data)
+    write_manifest(root, manifest_path, data, name_supplied=bool(a.name))
 
     readme = root / "README.md"
     if not readme.exists():

@@ -932,3 +932,47 @@ def test_unwritable_output_dir_exits_2(tmp_path):
         assert "Traceback" not in r.stderr
     finally:
         locked.chmod(0o700)
+
+
+@pytestmark_needs_pillow
+def test_rotated_tiff_is_not_measured_twice(tmp_path):
+    """Pillow reports TIFF display size already; swapping again rejects valid renders."""
+    src = tmp_path / "s.tif"
+    Image.new("RGB", (60, 45), (80, 90, 100)).save(src)
+    subprocess.run(["exiftool", "-q", "-overwrite_original", "-Orientation#=6", str(src)],
+                   check=True)
+    # Displays at 45x60, so a valid render is 90x120 stored as 120x90 with tag 6.
+    render = tmp_path / "r.tif"
+    Image.new("RGB", (120, 90), (80, 90, 100)).save(render)
+    subprocess.run(["exiftool", "-q", "-overwrite_original", "-Orientation#=6", str(render)],
+                   check=True)
+
+    r = run_cli(src, render, "--json")
+    assert r.returncode == 0, r.stdout + r.stderr
+    entry = json.loads(r.stdout)
+    assert entry["source_size"] == [45, 60], entry["source_size"]
+
+
+@pytestmark_needs_pillow
+def test_tiff_attribution_survives_the_pillow_only_path(tmp_path):
+    """Artist and Copyright are the owner's record, not structural tags."""
+    src = tmp_path / "s.tif"
+    Image.new("RGB", (60, 45), (80, 90, 100)).save(src)
+    subprocess.run(["exiftool", "-q", "-overwrite_original",
+                    "-Artist=Jesse Robbins", "-Copyright=(c) 1962",
+                    "-DateTimeOriginal=1962:06:14 11:05:00", str(src)], check=True)
+    render = tmp_path / "r.jpg"
+    Image.new("RGB", (120, 90), (80, 90, 100)).save(render, quality=95)
+
+    env = dict(os.environ)
+    env["PATH"] = os.pathsep.join(
+        p for p in env.get("PATH", "").split(os.pathsep)
+        if not (Path(p) / "exiftool").exists()
+    )
+    # JPEG target: Pillow's classic TIFF writer refuses some inherited tags.
+    r = run_cli(src, render, "--json", "--format", "jpeg", env=env)
+    assert r.returncode == 0, r.stderr
+    entry = json.loads(r.stdout)
+    got = subprocess.run(["exiftool", "-q", "-s3", "-Artist", entry["output"]],
+                         capture_output=True, text=True).stdout.strip()
+    assert got == "Jesse Robbins", f"attribution lost on the TIFF path: {got!r}"

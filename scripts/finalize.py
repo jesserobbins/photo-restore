@@ -209,6 +209,26 @@ def readable_render(render, workdir):
 # metadata
 # --------------------------------------------------------------------------- #
 
+def displayed_size(path):
+    """Dimensions as a viewer shows them, accounting for who already applied it.
+
+    Pillow's TIFF plugin swaps the reported size for orientations 5-8, so applying
+    the orientation again would measure a portrait scan as landscape. Every other
+    format reports raw dimensions and needs the swap.
+    """
+    size = image_size(path)
+    if size is None:
+        return None
+    try:
+        from PIL import Image
+        with Image.open(path) as im:
+            if (im.format or "").upper() == "TIFF":
+                return size
+    except Exception:
+        pass
+    return transposed_size(size, image_orientation(path))
+
+
 def transposed_size(size, orientation):
     """Displayed dimensions after applying EXIF orientation."""
     if orientation in ("5", "6", "7", "8"):
@@ -508,10 +528,12 @@ def source_embed(source, render, out_size, target_format):
                 # rather than embedded as false claims.
                 # Structural only: pixel layout, strips, tiles. Artist (0x013B)
                 # and Copyright (0x8298) are the owner's descriptive record and
-                # stay; Software and ModifyDate are likewise kept.
+                # stay; so do PageName and Software. 0x011D is PageName, not the
+                # predictor (that is 0x013D), and must not be dropped.
                 for structural in (0x0100, 0x0101, 0x0102, 0x0103, 0x0106,
                                    0x0111, 0x0115, 0x0116, 0x0117, 0x011C,
-                                   0x011D, 0x011E, 0x011F):
+                                   0x011E, 0x011F,
+                                   0x0142, 0x0143, 0x0144, 0x0145):
                     exif.pop(structural, None)
                 exif[274] = 1  # pixels are baked upright by the time this is attached
                 sub = exif.get_ifd(0x8769)
@@ -1008,21 +1030,17 @@ def main():
     target_format = choose_format(a.source, a.format)
     ext = FORMAT_EXT[target_format]
 
-    src_size = image_size(a.source)
-    if src_size is None:
+    src_display = displayed_size(a.source)
+    if src_display is None:
         die(f"Could not read dimensions of {a.source}")
     src_state = expected_source_state(a.source, use_exiftool)
-    # image_orientation() falls back to magick/sips, which is how a HEIC source
-    # gets a real orientation on a host without exiftool.
     src_orientation = (src_state.get("Orientation#")
                        or image_orientation(a.source) or "1")
-    src_display = transposed_size(src_size, src_orientation)
 
-    render_raw = image_size(a.render)
-    if render_raw is None:
+    render_display = displayed_size(a.render)
+    if render_display is None:
         die(f"Could not read dimensions of {a.render}")
     render_orientation = image_orientation(a.render)
-    render_display = transposed_size(render_raw, render_orientation)
 
     if abs(render_display[0] / render_display[1]
            - src_display[0] / src_display[1]) > 0.005:

@@ -16,7 +16,7 @@ metadata:
   default-mode: "conservative"
 ---
 
-# Photo Upscale & Enhance — Fidelity First
+# photo-restore: fidelity first
 
 ## Preferred image models
 

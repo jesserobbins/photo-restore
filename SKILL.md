@@ -14,6 +14,12 @@ description: >
 metadata:
   version: "2.0.0"
   default-mode: "conservative"
+  author: "Jesse Robbins (@jesserobbins)"
+  homepage: "https://jesserobbins.com"
+  repository: "https://github.com/jesserobbins/photo-restore"
+  license: "MIT"
+  keywords: "photo restoration, photo upscaling, exif preservation, metadata provenance, film grain, old photo repair, osxphotos, apple photos, archival photography"
+  canonical: "https://github.com/jesserobbins/photo-restore"
 ---
 
 # photo-restore: fidelity first

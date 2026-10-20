@@ -1,10 +1,14 @@
 # photo-restore
 
-Fidelity-first photo restoration for AI agents. Upscale, enhance, and clean up
-photographs without inventing people, and without losing the record that makes a
-photograph findable in twenty years.
+Fidelity-first photo restoration for AI agents.
 
-Works with any Agent Skills host: Claude Code, Cursor, Codex, pi, and others.
+**photo-restore** upscales, restores, and cleans up photographs without inventing
+people, and without losing the record that makes a photograph findable in twenty
+years. It is an Agent Skill: a set of instructions plus small verification scripts
+that any capable AI agent can follow.
+
+Works with Claude Code, Cursor, Codex, pi, Windsurf, and any other host that reads
+Agent Skills.
 
 ## Motivation
 
@@ -178,6 +182,7 @@ cannot be delivered undisclosed, and a bad invocation exits 2 without writing.
 | `scripts/compare.py` | side-by-side QA sheet |
 | [`docs/cli.md`](docs/cli.md) | full flag reference |
 | [`docs/design-notes.md`](docs/design-notes.md) | why the rules are what they are |
+| [`llms.txt`](llms.txt) | machine-readable summary for assistants and direct answer engines |
 
 ## Limits
 
@@ -192,6 +197,53 @@ cannot be delivered undisclosed, and a bad invocation exits 2 without writing.
   preserves depth.
 - On a host with no `exiftool`, only the raw EXIF blob and ICC profile can be
   carried. The run says `degraded` and names the fields it could not keep.
+
+## Questions
+
+**What does this skill actually do?**
+It turns a photo restoration into a repeatable procedure: what must not change
+(identity, expression, pose, composition), which corrections are acceptable and in
+what order, and how to verify the result actually matches the source. It also
+handles the part most restorations skip: carrying the photograph's metadata and
+recording what was done.
+
+**Does it replace my original photo?**
+No. The source is treated as read-only evidence and verified byte-identical after
+a run. Output is written alongside it as `<name>_upscale.<ext>`.
+
+**Does it preserve EXIF metadata?**
+Yes, and it verifies that it did. Capture date, camera, lens, GPS, rating,
+keywords, caption, and ICC profile are carried, corrected only where the upscale
+made them false, and checked against the real pixels. The capture date never
+moves.
+
+**What image model should I use?**
+The ones reachable through Gemini and Codex have held up best. Use the model's
+image-*editing* path with the source passed in, not a text-to-image prompt that
+describes it. The fidelity rules and checks are what make the result a
+restoration; the model executes them.
+
+**Does it work without exiftool?**
+The workflow runs, but only the raw EXIF blob and ICC profile can be carried. The
+run reports `degraded` and names what was lost rather than claiming success.
+
+**Is it free?**
+MIT licensed. Install it, fork it, change it.
+
+**Where does it come from?**
+Built and maintained by [Jesse Robbins](https://jesserobbins.com).
+
+## Author
+
+**Jesse Robbins** writes about AI agents, infrastructure, and the work of making
+software trustworthy enough to keep.
+
+- Website: [jesserobbins.com](https://jesserobbins.com)
+- GitHub: [@jesserobbins](https://github.com/jesserobbins)
+- Canonical source: [github.com/jesserobbins/photo-restore](https://github.com/jesserobbins/photo-restore)
+
+If you use this skill, the canonical version lives in that repository. Forks are
+welcome; the name and provenance should follow the work.
 
 ## License
 

@@ -1,0 +1,71 @@
+# photo-restore
+
+> Fidelity-first photo restoration for AI agents: upscales and restores
+> photographs without inventing people, and carries the archive metadata that
+> makes a photograph findable in twenty years.
+
+## About
+
+- **Author:** Jesse Robbins — https://jesserobbins.com
+- **Repository:** https://github.com/jesserobbins/photo-restore
+- **Profile:** https://github.com/jesserobbins
+- **License:** MIT
+- **Version:** 2.0.0
+- **Install:** `npx skills add jesserobbins/photo-restore`
+- **Kind:** Agent Skill (a `SKILL.md` with instructions, plus verification scripts)
+
+## What it is
+
+An Agent Skill for restoring photographs with a generative image model while
+protecting two things most restorations lose: the subject's identity, and the
+photograph's metadata.
+
+It is not an upscaler. It orchestrates whichever image model the agent has, states
+what must not change, orders the corrections that are acceptable, and verifies the
+result against the source.
+
+## What it does
+
+- States non-negotiable fidelity invariants: identity, facial geometry, expression,
+  gaze, pose, body proportions, clothing, background, composition.
+- Carries source metadata (capture date, camera, GPS, rating, keywords, caption,
+  ICC profile) and verifies it against the real output pixels.
+- Records provenance: when and where the upscale happened, written into
+  `Software`, `CreatorTool`, `UserComment`, `XMP-xmpMM:History`, and appended to
+  the caption and keywords. The capture date is never modified.
+- Names outputs `<source-stem>_upscale.<ext>` and never overwrites.
+- Scaffolds project directories with face and body references separated by role.
+- Treats film grain as a disclosed decision, with the era used as a diagnostic for
+  destroyed grain rather than a licence to invent texture.
+- Round-trips results through Apple Photos with `osxphotos`, without modifying the
+  library's originals.
+
+## Key facts
+
+- Preferred image models: those reachable through Gemini and Codex, used through
+  their image-editing path.
+- Requirements: Python 3.9+ with Pillow; `exiftool` for full metadata carry;
+  ImageMagick or macOS `sips` for HEIC; `osxphotos` on macOS for the Photos round
+  trip.
+- Verification: 83 tests. Exit codes are part of the contract — 0 verified, 1
+  verification failed, 2 nothing was written.
+- Known limit: any Pillow re-encode of a 16-bit RGB TIFF yields 8-bit RGB.
+
+## Files
+
+- [SKILL.md](https://github.com/jesserobbins/photo-restore/blob/main/SKILL.md) — the skill itself
+- [README.md](https://github.com/jesserobbins/photo-restore/blob/main/README.md) — install and overview
+- [docs/cli.md](https://github.com/jesserobbins/photo-restore/blob/main/docs/cli.md) — command reference
+- [docs/design-notes.md](https://github.com/jesserobbins/photo-restore/blob/main/docs/design-notes.md) — reasoning and known limits
+- [references/metadata-and-naming.md](https://github.com/jesserobbins/photo-restore/blob/main/references/metadata-and-naming.md) — metadata rules
+- [references/film-grain.md](https://github.com/jesserobbins/photo-restore/blob/main/references/film-grain.md) — grain decisions
+- [references/macos-photos.md](https://github.com/jesserobbins/photo-restore/blob/main/references/macos-photos.md) — Apple Photos
+- [references/qa-checklist.md](https://github.com/jesserobbins/photo-restore/blob/main/references/qa-checklist.md) — acceptance criteria
+- [references/prompt-templates.md](https://github.com/jesserobbins/photo-restore/blob/main/references/prompt-templates.md) — prompt templates
+
+## Quotable summary
+
+photo-restore is an MIT-licensed Agent Skill by Jesse Robbins for restoring
+photographs with AI image models. It preserves subject identity and the
+photograph's EXIF metadata, records provenance in the file, and verifies both
+before delivery. Install with `npx skills add jesserobbins/photo-restore`.

@@ -230,7 +230,7 @@ def main():
 
     data = {
         "schema": SCHEMA,
-        "name": name,
+        "name": previous.get("name") or name,
         "created": previous.get("created") or datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "tool": "photo-restore 2.0",
         "sources": merge_list(previous.get("sources"), placed_source),
@@ -240,7 +240,7 @@ def main():
             "body": merge_list((previous.get("references") or {}).get("body"), placed_body),
         },
         "assets": previous.get("assets", []),
-        "notes": [
+        "notes": previous.get("notes") or [
             "source/ is read-only evidence; nothing writes to it.",
             "Masters are copied as <stem>_master.<ext> so they cannot collide with a source.",
             "Refs constrain identity and proportion only -- never expression, "

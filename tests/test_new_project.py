@@ -163,3 +163,16 @@ def test_differing_sidecar_is_refused_not_overwritten(tmp_path):
     assert "already exists" in (r.stdout + r.stderr)
     kept = (proj / "source" / "img.jpg.xmp").read_text()
     assert "first" in kept and "second" not in kept
+
+
+def test_rescaffold_keeps_previous_name_and_notes(tmp_path):
+    src = make_image(tmp_path / "a.jpg")
+    proj = tmp_path / "p"
+    run_cli(proj, "--name", "Grandma portrait", "--source", src)
+    before = json.loads((proj / "manifest.json").read_text())
+
+    extra = make_image(tmp_path / "face.jpg")
+    run_cli(proj, "--force", "--face", extra)
+    after = json.loads((proj / "manifest.json").read_text())
+    assert after["name"] == "Grandma portrait", "re-scaffolding reset the label"
+    assert after["notes"] == before["notes"], "re-scaffolding reset the notes"

@@ -835,3 +835,46 @@ def test_heic_render_is_decoded_once_into_a_lossless_intermediate(tmp_path):
     entry2 = json.loads(r2.stdout)
     assert "pixels untouched" not in entry2["encode_detail"], \
         "the decoder's JPEG was delivered instead of our encode"
+
+
+@pytestmark_needs_pillow
+def test_image_wins_a_conflicting_capture_date_across_groups(tmp_path):
+    """Copying EXIF does not overwrite XMP, so both groups need the image's value."""
+    src = make_jpeg(tmp_path / "s.jpg")
+    subprocess.run(["exiftool", "-q", "-overwrite_original",
+                    "-CreateDate=1962:06:14 11:05:00",
+                    "-XMP-xmp:CreateDate=1962:06:14 11:05:00", str(src)], check=True)
+    sidecar = tmp_path / "s.jpg.xmp"
+    subprocess.run(["exiftool", "-q", "-o", str(sidecar), str(src)], check=True)
+    subprocess.run(["exiftool", "-q", "-overwrite_original",
+                    "-CreateDate=2026:01:01 00:00:00",
+                    "-XMP-xmp:CreateDate=2026:01:01 00:00:00", str(sidecar)], check=True)
+    render = make_jpeg(tmp_path / "r.jpg", size=(120, 90), tags=False)
+
+    r = run_cli(src, render, "--json")
+    assert r.returncode == 0, r.stdout + r.stderr
+    entry = json.loads(r.stdout)
+    for tag in ("-CreateDate", "-XMP-xmp:CreateDate"):
+        got = subprocess.run(["exiftool", "-q", "-s3", tag, entry["output"]],
+                             capture_output=True, text=True).stdout.strip()
+        assert got.startswith("1962"), f"{tag} took the sidecar's value: {got!r}"
+
+
+@pytestmark_needs_pillow
+def test_sidecar_caption_is_not_erased_by_the_image_copy(tmp_path):
+    """Both captions are the owner's words; precedence must not delete either."""
+    src = make_jpeg(tmp_path / "s.jpg")
+    subprocess.run(["exiftool", "-q", "-overwrite_original",
+                    "-Description=From the image", str(src)], check=True)
+    sidecar = tmp_path / "s.jpg.xmp"
+    subprocess.run(["exiftool", "-q", "-o", str(sidecar), str(src)], check=True)
+    subprocess.run(["exiftool", "-q", "-overwrite_original",
+                    "-Description=From the sidecar", str(sidecar)], check=True)
+    render = make_jpeg(tmp_path / "r.jpg", size=(120, 90), tags=False)
+
+    r = run_cli(src, render)
+    assert r.returncode == 0, r.stdout + r.stderr
+    got = subprocess.run(["exiftool", "-q", "-s3", "-Description",
+                          str(tmp_path / "s_upscale.jpg")],
+                         capture_output=True, text=True).stdout
+    assert "From the image" in got and "From the sidecar" in got, got

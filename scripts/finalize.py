@@ -179,7 +179,7 @@ def decode_with_system(src, dst):
     return None
 
 
-def readable_render(render, workdir, target_format):
+def readable_render(render, workdir):
     """A path Pillow can open for the render, decoding once if it must.
 
     Every reader downstream (metadata, ICC, encode) then works from the same file,
@@ -595,7 +595,11 @@ def copy_metadata(source, dest, render, colour_model_preserved=True, reencoded=T
     # not have, so copying the sidecar first and the image second means a
     # conflicting capture date resolves to the image's, not the sidecar's.
     image_subjects = exiftool_read_list(source, "Subject")
+    image_desc = exiftool_read(source, ["Description"]).get("Description") or ""
+    image_dates = exiftool_read(source, ["DateTimeOriginal", "CreateDate"])
     sidecar = source.with_name(source.name + ".xmp")
+    sidecar_desc = (exiftool_read(sidecar, ["Description"]).get("Description") or ""
+                    if sidecar.exists() else "")
     # Read the sidecar's list before the copies: the image copy overwrites it, so
     # the sidecar's values would otherwise be gone by merge time.
     sidecar_subjects = exiftool_read_list(sidecar, "Subject") if sidecar.exists() else []
@@ -655,6 +659,25 @@ def copy_metadata(source, dest, render, colour_model_preserved=True, reencoded=T
             )
 
     if sidecar.exists():
+        # "Image wins" only holds within a group: copying EXIF does not overwrite
+        # XMP, so a sidecar's XMP CreateDate survives beside the image's EXIF one
+        # and XMP-preferring readers use the wrong date. Write the image's values
+        # into both groups.
+        args = []
+        if image_dates.get("DateTimeOriginal"):
+            args += [f"-DateTimeOriginal={image_dates['DateTimeOriginal']}",
+                     f"-XMP-exif:DateTimeOriginal={image_dates['DateTimeOriginal']}"]
+        if image_dates.get("CreateDate"):
+            args += [f"-CreateDate={image_dates['CreateDate']}",
+                     f"-XMP-xmp:CreateDate={image_dates['CreateDate']}"]
+        # The sidecar's caption is still the owner's words; keep both rather than
+        # letting the image copy erase it.
+        if sidecar_desc.strip() and sidecar_desc.strip() not in image_desc:
+            args.append(f"-Description={append_text(image_desc, sidecar_desc)}")
+        if args:
+            ok_d, warn_d = exiftool_write(dest, args)
+            ok = ok and ok_d
+            warn = "\n".join(w for w in (warn, warn_d) if w)
         # List tags get replaced wholesale, so union the image's subjects with the
         # sidecar's rather than letting whichever was copied last win.
         current_sub = exiftool_read_list(dest, "Subject")
@@ -1031,7 +1054,7 @@ def main():
         workdir = Path(tempfile.mkdtemp(dir=out_dir, prefix=".finalize-"))
         # Decode once. Metadata, ICC and the encode all read the same file, so a
         # HEIC render cannot lose its profile in one path and keep it in another.
-        readable, decoder = readable_render(a.render, workdir, target_format)
+        readable, decoder = readable_render(a.render, workdir)
         plan["decoded_by"] = decoder
         # Without exiftool there is no way to merge tags, so the source's EXIF is
         # embedded during the single save instead. One encode, never read-then-

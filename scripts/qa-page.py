@@ -117,7 +117,9 @@ def resolve_entry_path(entry, project):
     project = project.resolve()
     # The project first: a cwd-relative file that happens to share a name must not
     # win, or reviewing project B can show project A's photographs.
-    for candidate in (project / path, project.parent / path):
+    bases = [project, project.parent, *project.parents]
+    for base in bases:
+        candidate = base / path
         if candidate.exists():
             return candidate
     cwd_candidate = path.resolve()
@@ -405,7 +407,17 @@ def order_key(record):
     strings. Pass is the reviewer's own ordering and is always an integer.
     """
     stamp = record.get("ts")
-    return (record.get("pass") or 0, stamp if isinstance(stamp, str) else "")
+    when = 0.0
+    if isinstance(stamp, str):
+        try:
+            parsed = datetime.fromisoformat(stamp.replace("Z", "+00:00"))
+            # Compare instants, not strings: 10:00-07:00 is later than 16:00Z, and
+            # string order says the opposite.
+            when = parsed.timestamp() if parsed.tzinfo else parsed.replace(
+                tzinfo=datetime.now().astimezone().tzinfo).timestamp()
+        except ValueError:
+            when = 0.0
+    return (record.get("pass") or 0, when)
 
 
 def latest_by_photo(records):
@@ -564,8 +576,12 @@ footer{max-width:1500px;margin:0 auto;padding:18px 0 60px;border-top:1px solid v
 const MODE = "__MODE__";
 const TOKEN = "__TOKEN__";
 const PASS = __PASS__;
-let unsent = 0;        // lines the server never accepted
 let inFlight = 0;      // record requests still open
+const failed = new Map();  // photo -> the line the server never accepted
+
+function renderLog(){
+  document.getElementById('log').value = Array.from(failed.values()).join('\n');
+}
 
 function setSlider(root, ratio){
   ratio = Math.min(1, Math.max(0, ratio));
@@ -634,17 +650,19 @@ async function record(card){
       // Acknowledged lines are already on disk; only failures need the log, or the
       // page would later claim its own recorded verdicts were never sent.
       showStatus(card, `recorded ${payload.verdict} (pass ${PASS})`);
+      if (failed.delete(payload.photo)) renderLog();
     } catch (err) {
       showStatus(card, 'could not record: ' + err.message + ' -- the line is in the log below');
-      logLine(line);
-      unsent++;
+      // One line per photo, so a retry that succeeds supersedes the stale failure.
+      failed.set(payload.photo, line);
+      renderLog();
     } finally {
       inFlight--;
     }
   } else {
     showStatus(card, `copied ${payload.verdict} to the log below; save it when done`);
-    logLine(line);
-    unsent++;
+    failed.set(payload.photo, line);
+    renderLog();
   }
 }
 
@@ -689,7 +707,7 @@ async function done(){
       const response = await fetch(`/${TOKEN}/done`, {method:'POST'});
       closed = response.ok;
     } catch (e) { closed = false; }
-    if (closed && unsent === 0){
+    if (closed && failed.size === 0){
       document.body.innerHTML = '<p style="padding:40px;font:16px system-ui">Review closed. ' +
         'The terminal has the summary.</p>';
     } else if (!closed){
@@ -804,12 +822,13 @@ def render_page(title, pairs, mode, token, pass_no, submit_line, hint):
         cards.append(card)
         nav.append(f'<a href="#p-{escape(pair["anchor"])}">{escape(pair["photo"])}</a>')
 
-    done_button = ('<button class="primary" data-action="done">Done — close review</button>'
-                   if mode == "serve"
-                   else '<button data-action="download">Download verdicts.jsonl</button>'
-                        '<button data-action="copy">Copy to clipboard</button>')
-    if mode == "static":
-        done_button += '<button class="primary" data-action="done">Finish</button>'
+    # Copy and Download belong in both modes: a failed POST leaves the log as the
+    # only copy of a verdict, and serve mode must be able to hand it back.
+    done_button = ('<button data-action="download">Download verdicts.jsonl</button>'
+                   '<button data-action="copy">Copy to clipboard</button>'
+                   '<button class="primary" data-action="done">'
+                   + ("Done — close review" if mode == "serve" else "Finish")
+                   + "</button>")
 
     return (PAGE.replace("__TITLE__", escape(title))
                 .replace("__SUBMIT__", escape(submit_line))
@@ -1091,7 +1110,7 @@ def main():
                               "verdicts": str(verdict_path(out_dir))}, indent=2))
         return 0 if added else 1
 
-    pairs = resolve_pairs(args)
+    pairs = assign_keys(resolve_pairs(args))
     callouts = callouts_for([parse_crop(spec) for spec in args.crop], pairs)
     prior = latest_by_photo(records)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -1130,15 +1149,15 @@ def main():
     submit_line = f"Recording to {verdict_path(out_dir)} as pass {pass_no}."
     hint = "Record each photo, then press Done to hand control back."
     html = render_page(title, built, "serve", token, pass_no, submit_line, hint)
-    # Write the page as well as serving it: it is then a record of what was
-    # reviewed, and the generated-file list points at something that exists.
+    server = ReviewServer(html, token, out_dir, pass_no, args.host,
+                          args.port, args.idle_timeout)
+    server.build()  # bind before writing: exit 2 means nothing was written
+
+    # The page is written as well as served, so it is a record of what was reviewed
+    # and the generated-file list points at something that exists.
     page = out_dir / f"review-pass{pass_no}.html"
     page.write_text(html)
     write_files_manifest(out_dir, page)
-
-    server = ReviewServer(html, token, out_dir, pass_no, args.host,
-                          args.port, args.idle_timeout)
-    server.build()  # bind once, so the URL printed below is the one that serves
 
     local = f"http://127.0.0.1:{server.port}/{token}/"
     say(f"review page: {local}")

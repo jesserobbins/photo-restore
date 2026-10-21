@@ -9,6 +9,7 @@ Run: python -m pytest tests/ -q
 
 import importlib.util
 import json
+import re
 import os
 import shutil
 import socket
@@ -816,3 +817,82 @@ def test_serve_json_stdout_is_clean(tmp_path):
     finally:
         if proc.poll() is None:
             proc.kill()
+
+
+# --------------------------------------------------------------------------- #
+# fourth review round
+# --------------------------------------------------------------------------- #
+
+@pytest.mark.needs_pillow
+def test_cli_gives_colliding_render_names_distinct_keys(tmp_path):
+    """Through the CLI, not the helper: this is the path that was left unwired."""
+    pairs = []
+    for folder in ("a", "b"):
+        (tmp_path / folder).mkdir()
+        src = tmp_path / folder / "src.png"
+        render = tmp_path / folder / "render.png"
+        Image.new("RGB", (40, 30)).save(src)
+        Image.new("RGB", (80, 60)).save(render)
+        pairs += ["--pair", str(src), str(render)]
+    r = run_cli(*pairs, "--static", "--out-dir", tmp_path / "qa", "--json")
+    assert r.returncode == 0, r.stderr
+    html = Path(json.loads(r.stdout)["page"]).read_text()
+    keys = set(re.findall(r'data-photo="([^"]+)"', html))
+    assert len(keys) == 2, keys
+
+
+@pytest.mark.needs_pillow
+def test_record_and_download_are_available_when_serving(tmp_path):
+    src, out = make_pair(tmp_path)
+    port = free_port()
+    proc = subprocess.Popen(
+        [sys.executable, str(SCRIPT), "--pair", str(src), str(out),
+         "--port", str(port), "--out-dir", str(tmp_path / "qa"),
+         "--idle-timeout", "20"],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    try:
+        token = None
+        deadline = time.time() + 20
+        while time.time() < deadline:
+            line = proc.stdout.readline()
+            if "review page:" in line:
+                token = line.strip().rstrip("/").split("/")[-1]
+                break
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/{token}/", timeout=5) as r:
+            html = r.read().decode()
+        # The failure path tells the owner to copy or download; those controls must
+        # exist in serve mode too, or the advice points at nothing.
+        assert 'data-action="download"' in html
+        assert 'data-action="copy"' in html
+        assert 'data-action="done"' in html
+        urllib.request.urlopen(urllib.request.Request(
+            f"http://127.0.0.1:{port}/{token}/done", data=b"{}", method="POST"), timeout=5).read()
+        proc.wait(timeout=20)
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+
+
+def test_ordering_compares_instants_not_strings():
+    records = [
+        {"photo": "a", "verdict": "approve", "pass": 1, "ts": "2026-10-21T16:00:00Z"},
+        {"photo": "a", "verdict": "reject", "pass": 1, "ts": "2026-10-21T10:00:00-07:00"},
+    ]
+    # 10:00-07:00 is 17:00Z, later than 16:00Z.
+    assert qa_page.latest_by_photo(records)["a"]["verdict"] == "reject"
+
+
+@pytest.mark.needs_pillow
+def test_nested_project_path_resolves_from_inside_the_project(tmp_path):
+    nested = tmp_path / "albums" / "grandma"
+    (nested / "source").mkdir(parents=True)
+    (nested / "output").mkdir()
+    Image.new("RGB", (40, 30)).save(nested / "source" / "t.jpg")
+    Image.new("RGB", (80, 60)).save(nested / "output" / "t_upscale.jpg")
+    (nested / "manifest.json").write_text(json.dumps({"assets": [{
+        "source": "albums/grandma/source/t.jpg",
+        "output": "albums/grandma/output/t_upscale.jpg",
+        "verification": "pass"}]}))
+    pairs = qa_page.pairs_from_manifest(nested)
+    assert len(pairs) == 1
+    assert pairs[0]["source"] == nested / "source" / "t.jpg"

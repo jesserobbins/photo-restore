@@ -124,6 +124,36 @@ script. XMP sidecars travel with their image and follow the same rule.
 `--force` merges: `assets` (the finalizer's verification history), `created`, the
 `name`, and any notes already in the manifest all survive.
 
+## qa-page.py
+
+```
+python scripts/qa-page.py [--project DIR | --pair SOURCE RENDER ...] [--crop SPEC ...]
+```
+
+Builds the human review page: a slider per photo pair, callout crops of specific
+details, one verdict per photo, a note per callout, and an append-only verdict log
+at `qa/verdicts.jsonl`. Serves by default and returns when the review is closed.
+
+| Flag | Default | |
+| --- | --- | --- |
+| `--project DIR` | — | pair photos from `DIR/manifest.json`, skipping failed verifications |
+| `--pair SOURCE RENDER` | — | review one pair; repeatable, overrides the manifest |
+| `--crop SPEC` | — | `LABEL:L,T,R,B` for all photos, or `PHOTO:LABEL:L,T,R,B`. Source pixels |
+| `--out-dir DIR` | `<project>/qa` or `./qa` | where the page and verdicts live |
+| `--static` | off | write one self-contained HTML file instead of serving |
+| `--host` | `127.0.0.1` | `0.0.0.0` to reach it from Codex's browser |
+| `--port` | free port | |
+| `--open` | off | open a browser, best effort |
+| `--idle-timeout` | `1800` | close an abandoned review; `0` disables |
+| `--import FILE` | — | validate and append verdicts downloaded in static mode |
+| `--clean` | off | remove generated files; keeps `verdicts.jsonl` |
+| `--verdicts` | off | with `--clean`, remove the verdict log too |
+| `--json` | off | emit a summary |
+
+Exit codes: 0 closed with a verdict (or page written), 1 closed with nothing
+recorded, 2 usage or environment error. Per-photo callouts, id stability, and the
+per-environment recipes are in [`../references/qa-page.md`](../references/qa-page.md).
+
 ## compare.py
 
 ```

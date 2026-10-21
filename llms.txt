@@ -10,7 +10,7 @@
 - **Repository:** https://github.com/jesserobbins/photo-restore
 - **Profile:** https://github.com/jesserobbins
 - **License:** MIT
-- **Version:** 2.0.0
+- **Version:** 2.1.0
 - **Install:** `npx skills add jesserobbins/photo-restore`
 - **Kind:** Agent Skill (a `SKILL.md` with instructions, plus verification scripts)
 
@@ -39,6 +39,9 @@ result against the source.
   destroyed grain rather than a licence to invent texture.
 - Round-trips results through Apple Photos with `osxphotos`, without modifying the
   library's originals.
+- Builds a human review page: a slider per photo, callout crops of specific
+  details, one verdict per photo, and an append-only verdict log the agent reads
+  back.
 
 ## Key facts
 
@@ -47,7 +50,7 @@ result against the source.
 - Requirements: Python 3.9+ with Pillow; `exiftool` for full metadata carry;
   ImageMagick or macOS `sips` for HEIC; `osxphotos` on macOS for the Photos round
   trip.
-- Verification: 83 tests. Exit codes are part of the contract — 0 verified, 1
+- Verification: 122 tests. Exit codes are part of the contract — 0 verified, 1
   verification failed, 2 nothing was written.
 - Known limit: any Pillow re-encode of a 16-bit RGB TIFF yields 8-bit RGB.
 
@@ -58,6 +61,7 @@ result against the source.
 - [docs/cli.md](https://github.com/jesserobbins/photo-restore/blob/main/docs/cli.md) — command reference
 - [docs/design-notes.md](https://github.com/jesserobbins/photo-restore/blob/main/docs/design-notes.md) — reasoning and known limits
 - [references/metadata-and-naming.md](https://github.com/jesserobbins/photo-restore/blob/main/references/metadata-and-naming.md) — metadata rules
+- [references/qa-page.md](https://github.com/jesserobbins/photo-restore/blob/main/references/qa-page.md) — the review page
 - [references/film-grain.md](https://github.com/jesserobbins/photo-restore/blob/main/references/film-grain.md) — grain decisions
 - [references/macos-photos.md](https://github.com/jesserobbins/photo-restore/blob/main/references/macos-photos.md) — Apple Photos
 - [references/qa-checklist.md](https://github.com/jesserobbins/photo-restore/blob/main/references/qa-checklist.md) — acceptance criteria

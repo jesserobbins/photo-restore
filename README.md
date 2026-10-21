@@ -71,6 +71,9 @@ brew install osxphotos   # macOS only
   never moves.
 - **Names outputs predictably.** `<source-stem>_upscale.<ext>`, with `_enhance`
   for a higher-detail variant. Never overwrites.
+- **Puts the judgement where a human can make it.** A review page with a slider per
+  photo, callout crops of the eye, hands, and collar, one verdict per photo, and an
+  append-only verdict log the agent reads back.
 - **Keeps film grain honest.** Grain is a decision with a disclosure, and the era
   is a diagnostic for spotting destroyed grain rather than a licence to invent
   it.
@@ -162,7 +165,7 @@ interchangeable. Face references constrain *who*; body references constrain
 python3 -m pytest tests/ -q
 ```
 
-83 tests covering the invariants rather than the prose: the original is
+122 tests covering the invariants rather than the prose: the original is
 byte-identical after a run, an undated source does not inherit the render's
 processing date, a keyword containing a comma survives, a reconstructed grain
 cannot be delivered undisclosed, and a bad invocation exits 2 without writing.
@@ -172,6 +175,7 @@ cannot be delivered undisclosed, and a bad invocation exits 2 without writing.
 | Path | |
 | --- | --- |
 | `SKILL.md` | the skill: fidelity rules, workflow, decision tables |
+| `references/qa-page.md` | review page: modes, callouts, verdict log |
 | `references/prompt-templates.md` | prompts per case, plus grain clauses |
 | `references/qa-checklist.md` | acceptance criteria, visual and metadata |
 | `references/metadata-and-naming.md` | tag table, provenance, format matrix, exiftool gotchas |
@@ -179,7 +183,9 @@ cannot be delivered undisclosed, and a bad invocation exits 2 without writing.
 | `references/macos-photos.md` | Photos.app round trip |
 | `scripts/finalize.py` | encode, copy metadata, correct, verify, manifest |
 | `scripts/new-project.py` | scaffold a project |
-| `scripts/compare.py` | side-by-side QA sheet |
+| `scripts/qa-page.py` | review page: slider, callout crops, verdicts |
+| `scripts/compare.py` | single-sheet QA comparison |
+| [`references/qa-page.md`](references/qa-page.md) | the review page per environment |
 | [`docs/cli.md`](docs/cli.md) | full flag reference |
 | [`docs/design-notes.md`](docs/design-notes.md) | why the rules are what they are |
 | [`llms.txt`](llms.txt) | machine-readable summary for assistants and direct answer engines |

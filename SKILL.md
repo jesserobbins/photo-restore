@@ -12,7 +12,7 @@ description: >
   deblurring, and face-reference-guided restoration. Prefer faithful recovery
   over creative reconstruction or beautification.
 metadata:
-  version: "2.0.0"
+  version: "2.1.0"
   default-mode: "conservative"
   author: "Jesse Robbins (@jesserobbins)"
   homepage: "https://jesserobbins.com"
@@ -171,7 +171,7 @@ make one by hand.
   refs/face/   identity constraints: bone structure, hairline, marks
   refs/body/   silhouette and proportion constraints
   output/      suffixed results, metadata intact
-  qa/          compare.py sheets
+  qa/          review pages, callout crops, verdicts.jsonl
   manifest.json
 ```
 
@@ -303,11 +303,25 @@ Follow [references/qa-checklist.md](references/qa-checklist.md). At minimum:
   substituted; crunchy noise at edges means over-sharpening, not grain.
 - If the output fails **any** high-priority invariant, **reduce processing,
   mask the affected area, or use the conservative baseline**.
-- Optionally run `python scripts/compare.py original.jpg enhanced.png
-  --out comparison.png --crop 100,80,300,320` to make an aligned visual
+- When a human is in the loop, put the judgement where they can make it: build the
+  review page and let them record a verdict rather than narrating what to look at.
+
+  ```sh
+  python scripts/qa-page.py --project <project> \
+    --crop "Face:60,40,300,300" --crop "Hands:150,250,420,390"
+  ```
+
+  A slider per photo, callout crops of the specific details, one verdict per photo
+  and a note per callout. The command returns when they press Done, and the
+  verdicts are in `qa/verdicts.jsonl` for you to read. On a host with no browser or
+  no reachable port, add `--static`, then `--import` what they download. Full
+  detail in [references/qa-page.md](references/qa-page.md).
+- Without a human, run `python scripts/compare.py original.jpg enhanced.png
+  --out comparison.png --crop 100,80,300,320` for an aligned single-sheet
   comparison. Coordinates are in **original-image pixels**; crop is optional.
 
-No aggregate image-similarity metric can substitute for these checks.
+No aggregate image-similarity metric can substitute for these checks, and a
+similarity number must never stand in for a verdict.
 
 ### 6. Finalize the file: name it and carry the metadata
 
@@ -343,6 +357,19 @@ If `exiftool` is unavailable and the host has no filesystem at all, do not
 assert that metadata was preserved. Give the user the exact commands from
 [references/metadata-and-naming.md](references/metadata-and-naming.md) and say
 they were not run here.
+
+### 6a. Read the review, then offer to clean up
+
+If a review page was used, read `qa/verdicts.jsonl` before delivering. The last
+record per photo wins, and the callout notes name the specific defect:
+
+- `reject` or `needs-work` means another pass. Use the callout notes rather than
+  re-guessing what was wrong.
+- `approve` is the human half of the checklist passing.
+
+Then offer cleanup: `python scripts/qa-page.py --project <project> --clean` removes
+the page and keeps the verdicts. Ask before using `--verdicts`, which deletes the
+record of their judgement.
 
 ### 7. Deliver transparently
 

@@ -266,7 +266,8 @@ def test_static_page_is_self_contained(tmp_path):
     assert "src=\"/" not in html, "no relative asset references"
     assert summary["callouts"] == 1
     # Two files: the page and the bookkeeping list. Verdicts appear only when used.
-    assert sorted(p.name for p in qa_dir.iterdir()) == [".qa-page-files", page.name]
+    names = {p.name for p in qa_dir.iterdir()}
+    assert names == {".qa-page-files", ".qa-page-pass", ".qa-page.lock", page.name}, names
 
 
 @pytest.mark.needs_pillow
@@ -1019,8 +1020,9 @@ def test_key_does_not_depend_on_the_working_directory(tmp_path):
     Image.new("RGB", (40, 30)).save(project / "src.jpg")
     Image.new("RGB", (80, 60)).save(renders / "t.jpg")
     pair = {"render": renders / "t.jpg", "source": project / "src.jpg"}
-    first = qa_page.pair_key(pair, project)
-    assert not first.startswith("/"), "keys should be relative to the project"
+    # Inside the log's root the key is relative; outside it, absolute and therefore
+    # unique. Both are stable.
+    assert qa_page.pair_key(pair, tmp_path / "work") == "renders/t.jpg"
     # The CLI must anchor on the verdict log, not on the cwd it happens to run in.
     qa_dir = tmp_path / "work" / "qa"
     outs = []
@@ -1095,3 +1097,34 @@ def test_mixed_relative_and_absolute_entry_resolves(tmp_path):
     pairs = qa_page.pairs_from_manifest(project)
     assert len(pairs) == 1
     assert pairs[0]["source"] == projects / "source" / "x.jpg"
+
+
+def test_pass_numbers_are_allocated_atomically(tmp_path):
+    """A served review and an import into one out-dir must not both be pass 1."""
+    qa_dir = tmp_path / "qa"
+    first = qa_page.allocate_pass(qa_dir)
+    second = qa_page.allocate_pass(qa_dir)
+    assert (first, second) == (1, 2)
+
+
+def test_ambiguous_manifest_entry_is_refused(tmp_path):
+    """Two bases resolving to real files means the manifest does not say which."""
+    decoy = tmp_path / "proj" / "source"
+    decoy.mkdir(parents=True)
+    elsewhere = tmp_path / "source"
+    elsewhere.mkdir()
+    Image.new("RGB", (40, 30)).save(decoy / "x.jpg")
+    Image.new("RGB", (40, 30)).save(elsewhere / "x.jpg")
+    out = tmp_path / "proj" / "output"
+    out.mkdir()
+    Image.new("RGB", (80, 60)).save(out / "x_upscale.jpg")
+    # A second base that also resolves both files: now nothing says which is meant.
+    (tmp_path / "output").mkdir()
+    Image.new("RGB", (80, 60)).save(tmp_path / "output" / "x_upscale.jpg")
+    project = tmp_path / "proj"
+    (project / "manifest.json").write_text(json.dumps({"assets": [{
+        "source": "source/x.jpg", "output": "output/x_upscale.jpg",
+        "verification": "pass"}]}))
+    with pytest.raises(SystemExit) as exc:
+        qa_page.pairs_from_manifest(project)
+    assert exc.value.code == 2

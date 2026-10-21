@@ -131,12 +131,21 @@ def resolve_asset(source, output, project):
                    project, project.parent, *project.parents):
         if anchor not in bases:
             bases.append(anchor)
+    found = []
     for base in bases:
         candidate_src = src if src.is_absolute() else base / src
         candidate_out = out if out.is_absolute() else base / out
         if candidate_src.exists() and candidate_out.exists():
-            return candidate_src, candidate_out
-    return None, None
+            found.append((candidate_src, candidate_out))
+    if len(found) > 1:
+        # Two bases resolve to existing files and nothing in the manifest says which
+        # one finalize meant. Choosing would silently review a different photograph.
+        die(
+            f"the manifest entry for {out.name} is ambiguous: "
+            + " and ".join(str(s) for s, _ in found)
+            + ". Re-run finalize.py with absolute paths, or review it with --pair."
+        )
+    return found[0] if found else (None, None)
 
 
 def pairs_from_manifest(project):
@@ -214,12 +223,8 @@ def pair_key(pair, root):
     try:
         return str(render.relative_to(root_path))
     except ValueError:
-        pass
-    try:
-        # Prefix the root's own name: without it, `root/output/r.jpg` and
-        # `root/../output/r.jpg` both read `output/r.jpg` and share a verdict.
-        return f"{root_path.name}/{render.relative_to(root_path.parent)}"
-    except ValueError:
+        # Outside the log's root: the absolute path is the only key that cannot
+        # collide with a relative one or with another project's file.
         return str(render)
 
 
@@ -512,6 +517,32 @@ def append_record(path, record):
         os.fsync(handle.fileno())
         fcntl.flock(handle, fcntl.LOCK_UN)
     return record
+
+
+def allocate_pass(out_dir):
+    """Claim the next pass number atomically.
+
+    Two sessions sharing one out-dir — a served review and an --import — must not
+    both call themselves pass 1, or an imported verdict outranks a later live one.
+    """
+    import fcntl
+
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    counter = out_dir / ".qa-page-pass"
+    with open(out_dir / ".qa-page.lock", "w") as lockfh:
+        fcntl.flock(lockfh, fcntl.LOCK_EX)
+        current = 0
+        if counter.exists():
+            try:
+                current = int(counter.read_text().strip() or 0)
+            except ValueError:
+                current = 0
+        current = max(current, next_pass(read_verdicts(verdict_path(out_dir))) - 1)
+        nxt = current + 1
+        counter.write_text(f"{nxt}\n")
+        fcntl.flock(lockfh, fcntl.LOCK_UN)
+    return nxt
 
 
 def next_pass(records):
@@ -1069,7 +1100,7 @@ def import_file(path, out_dir, records):
     path = Path(path)
     if not path.exists():
         die(f"--import file not found: {path}")
-    pass_no = next_pass(records)
+    pass_no = allocate_pass(out_dir)
     # Validate every line before writing any of them: a half-imported file would
     # leave the log in a state nobody asked for.
     staged = []
@@ -1183,7 +1214,7 @@ def main():
     finally:
         shutil.rmtree(workdir, ignore_errors=True)
 
-    pass_no = next_pass(records)
+    pass_no = allocate_pass(out_dir)
     token = secrets.token_urlsafe(12)
     title = f"Review · pass {pass_no}"
 
@@ -1203,8 +1234,9 @@ def main():
         else:
             say(f"page: {page}")
             say(f"pairs: {len(built)}  callouts: {summary['callouts']}  pass: {pass_no}")
-            say(f"open it, then import what you record: "
-                f"--import {out_dir / 'verdicts.jsonl'}")
+            say("open it, Record each photo, then Download verdicts.jsonl from the "
+                "page and import that file:")
+            say(f"  --import <downloaded file> --out-dir {out_dir}")
         if args.open and shutil.which("open"):
             subprocess.run(["open", str(page)], check=False)
         return 0

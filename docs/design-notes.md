@@ -154,3 +154,25 @@ anything.
 
 The lesson is the same as for the metadata work. When one class of fault comes back,
 the mechanism is wrong.
+
+
+## Why the description states triggers only
+
+The description in `SKILL.md` names the situations that call for this skill. It does
+not summarize the workflow.
+
+A description that summarizes the workflow gives a model enough to act without
+reading the body. I tested that on this skill. Five fresh agent runs saw the older
+description, which listed what the skill keeps and carries. Every run produced a
+three step restoration plan from the description alone: inspect, keep the original
+and its metadata, restore conservatively and compare. Each run then said it would
+still read the body, but the plan was already there to follow under time pressure.
+
+Five runs with a trigger-only description produced no plan. Each run said the
+description was enough to select the skill and named reading the body as its first
+step.
+
+The tradeoff is real. The skills directory shows the description in its listing, and
+a trigger list sells less than a summary. The README, llms.txt and the repository
+description carry the sales copy. The description is for the model that must decide
+whether to read the skill.

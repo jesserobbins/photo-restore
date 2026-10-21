@@ -588,7 +588,11 @@ const { chromium } = require('playwright');
 
 
 @pytest.mark.needs_pillow
-@pytest.mark.skipif(NODE_PATH is None, reason="needs node with playwright installed")
+@pytest.mark.skipif(
+    NODE_PATH is None,
+    reason=("needs node with playwright: the page's JavaScript is NOT checked in this "
+            "run. Set NODE_PATH to a node_modules folder that holds playwright."),
+)
 def test_page_script_runs_and_records_in_a_browser(tmp_path):
     src, out = make_pair(tmp_path)
     qa_dir = tmp_path / "qa"
@@ -934,7 +938,7 @@ def test_nested_project_path_resolves_from_inside_the_project(tmp_path):
 def test_generated_script_is_syntactically_valid(tmp_path):
     """Cheap guard: a JSON-escaped backslash once turned a JS string into a newline."""
     if shutil.which("node") is None:
-        pytest.skip("needs node")
+        pytest.skip("needs node: the generated script is NOT checked in this run")
     src, out = make_pair(tmp_path)
     r = run_cli("--pair", src, out, "--static", "--out-dir", tmp_path / "qa", "--json")
     html = Path(json.loads(r.stdout)["page"]).read_text()
@@ -1128,3 +1132,4 @@ def test_ambiguous_manifest_entry_is_refused(tmp_path):
     with pytest.raises(SystemExit) as exc:
         qa_page.pairs_from_manifest(project)
     assert exc.value.code == 2
+

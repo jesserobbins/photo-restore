@@ -175,12 +175,17 @@ minutes with no request. Pass `--idle-timeout 0` to turn the timer off. The page
 sends a signal each minute, so a review that stays open does not reach the limit.
 
 You changed the page and you want to know that it still works. The Python tests
-check the markup and the verdict file. Only a browser can check the script. When
-node and playwright are available, run:
+check the markup and the verdict file. Only a browser can check the script, and that
+check runs only when the host has the tools. Install them once:
 
 ```bash
-NODE_PATH=/path/to/node_modules python3 -m pytest tests/ -q -k browser
+mkdir -p .tools && cd .tools && npm install playwright && npx playwright install chromium
+cd .. && NODE_PATH=.tools/node_modules python3 -m pytest tests/ -q
 ```
 
-Without playwright the test skips. A test with `node --check` still reads the
-generated script and fails on a syntax error.
+Without playwright the test skips, and the run prints a coverage note that says the
+script was not executed. Do not read a green run as a check of the page's
+JavaScript unless the note is absent.
+
+A test with `node --check` reads the generated script on any host with node, so a
+syntax error still fails without a browser.

@@ -12,11 +12,11 @@ result and keeps the identity, the facial features, the expression, the gaze, th
 pose, the body proportions, the clothing, the composition and the historical
 authenticity of each subject.
 
-Start with a single photo. Use the optional features for more demanding work.
+Start with a single photo and . Use the optional features for more demanding work.
 
-- **Reference photographs.** Supply more face or body photos to guide an
-  identity-accurate restore. The skill keeps the expression, the pose and the
-  appearance of the source.
+- **Reference photographs.** Supply more face or body photos of the same person to
+  guide an identity-accurate restore. The skill keeps the expression, the pose and
+  the appearance of the source.
 - **Organized projects.** Use a fixed set of folders for the source images, the
   reference photos, the restored files and the comparisons.
 - **Metadata preservation.** Carry the EXIF, IPTC and XMP metadata from the source,
@@ -31,15 +31,14 @@ Start with a single photo. Use the optional features for more demanding work.
 - **Apple Photos integration.** Retrieve the original, keep the metadata, and import
   the restored version without a change to the original.
 
+A reference photo is a guide, not content. The skill does not swap faces. It does
+not take a face from one photo and put it into another. It restores the face that is
+already in the source photo, and it uses the reference photos to keep the identity
+accurate. If you have no photo of the person as the source, this skill is not the
+tool for the job.
+
 Use the skill directly for a simple restore. Use the project structure, the
 reference images and the verification tools for harder work.
-
-**Prioritize faithful recovery over reconstruction, beautification or invented
-detail.**
-
-An Agent Skill is a set of instructions that an AI agent reads and follows. This
-folder is one such skill, and it also holds scripts that make the metadata work
-checkable.
 
 ## Motivation
 
@@ -59,13 +58,11 @@ Windsurf all read them.
    ```bash
    npx skills add jesserobbins/photo-restore
    ```
-
 2. If the repository holds more than one skill, name the skill to install.
 
    ```bash
    npx skills add <owner>/<repo> --skill photo-restore
    ```
-
 3. If you cannot use the command, copy the folder by hand. The folder name must
    equal the `name` field in `SKILL.md`.
 
@@ -78,12 +75,13 @@ instructions and add the reference files as project material.
 
 ## Requirements
 
-| Tool | What it does | If it is missing |
-| --- | --- | --- |
-| Python 3.9 or later, with Pillow | runs the helper scripts | you get the workflow as text only |
-| `exiftool` | copies and checks the metadata | the run reports `degraded` and names the loss |
-| ImageMagick or `sips` | opens HEIC and HEIF files | the run refuses HEIC input |
-| `osxphotos` | reads and writes the Apple Photos library | you use file paths instead |
+
+| Tool                             | What it does                              | If it is missing                             |
+| -------------------------------- | ----------------------------------------- | -------------------------------------------- |
+| Python 3.9 or later, with Pillow | runs the helper scripts                   | you get the workflow as text only            |
+| `exiftool`                       | copies and checks the metadata            | the run reports`degraded` and names the loss |
+| ImageMagick or`sips`             | opens HEIC and HEIF files                 | the run refuses HEIC input                   |
+| `osxphotos`                      | reads and writes the Apple Photos library | you use file paths instead                   |
 
 You do not need any of these tools to read the skill as instructions. The scripts
 make the metadata guarantee checkable.
@@ -121,10 +119,8 @@ The three commands below restore one photograph.
    ```bash
    python scripts/new-project.py grandma --source target.jpg --face face.jpg
    ```
-
 2. Restore the photograph with your image model. Write the result to a temporary
    file.
-
 3. Finalize the result. This step names the file, carries the metadata and checks
    the result.
 
@@ -219,6 +215,12 @@ python3 -m pytest tests/ -q
 The tests check the rules, not the text. They confirm that the source file does not
 change, that an undated source does not get the date of the render, and that a
 keyword with a comma survives.
+
+One test loads the review page in a browser and fails on any error from its script.
+That test runs only when the host has node and playwright, because the skill itself
+needs neither. A run without them skips the test and prints a coverage note, so a
+green result never hides an unexecuted page. The setup is in
+[references/qa-page.md](references/qa-page.md).
 
 ## Common questions
 

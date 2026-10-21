@@ -38,6 +38,9 @@ the corrections, and it checks the result against the source file.
 - It treats film grain as a decision that the file discloses.
 - It moves a result into Apple Photos with `osxphotos` and does not change the items
   that are already in the library.
+- It uses reference photos of the same person as an identity guide. It does not swap
+  faces or move a face from one photo into another. The face in the result is the
+  face in the source photo.
 - It builds a review page for a human. The page has a slider, callout crops and one
   verdict for each photo.
 

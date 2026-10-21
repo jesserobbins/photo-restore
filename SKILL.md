@@ -80,12 +80,20 @@ Use this skill when the user asks to upscale, improve, clean, restore, sharpen,
 denoise, deblur or increase the resolution of a photo. It fits portraits, family
 photos, group photos, archive photos and scans.
 
+A reference photo of the person is a guide for the identity. It is not content.
+This skill does not swap faces. It does not move a face from one photo into another.
+It restores the face that the source photo already shows. The owner must have a photo
+of the person to use as the source.
+
 When the user supplies reference photos of the same person, use them as identity
 limits. Do not use them as replacement content.
 
 If the user asks for a style, a composite, a new pose, a different expression, a
-face swap or a new interpretation, say that the request is outside the default
-mode. Alternatively, do the requested edit and do not call it a faithful restore.
+face swap or a new interpretation, say that the request is outside this skill. A
+face swap takes the face from a different photo, and that is not a restore.
+
+If the user wants the edit for another purpose, you can do it. Do not call the
+result a faithful restore.
 
 ## Limits that you must keep
 

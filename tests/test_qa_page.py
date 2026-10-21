@@ -967,3 +967,56 @@ def test_import_places_an_unstamped_record_before_an_explicit_earlier_one(tmp_pa
     assert run_cli("--import", download, "--out-dir", qa_dir).returncode == 0
     latest = qa_page.latest_by_photo(qa_page.read_verdicts(qa_dir / "verdicts.jsonl"))
     assert latest["a"]["verdict"] == "approve", "the dated approval should win"
+
+
+# --------------------------------------------------------------------------- #
+# sixth review round
+# --------------------------------------------------------------------------- #
+
+@pytest.mark.needs_pillow
+def test_unstamped_block_keeps_file_order(tmp_path):
+    """Two unstamped lines before a dated one must increase, not tie."""
+    qa_dir = tmp_path / "qa"
+    download = tmp_path / "d.jsonl"
+    download.write_text(
+        json.dumps({"photo": "a", "verdict": "reject"}) + "\n"
+        + json.dumps({"photo": "a", "verdict": "needs-work"}) + "\n"
+        + json.dumps({"photo": "b", "verdict": "approve",
+                      "ts": "2026-01-01T00:00:00+00:00"}) + "\n")
+    assert run_cli("--import", download, "--out-dir", qa_dir).returncode == 0
+    records = qa_page.read_verdicts(qa_dir / "verdicts.jsonl")
+    a_records = [r for r in records if r["photo"] == "a"]
+    assert len(a_records) == 2
+    # The later line in the file is the later verdict.
+    assert a_records[0]["ts"] < a_records[1]["ts"], a_records
+    assert qa_page.latest_by_photo(records)["a"]["verdict"] == "needs-work"
+
+
+@pytest.mark.needs_pillow
+def test_callout_scaling_is_independent_per_axis(tmp_path):
+    """A near-square render must not reject a full-height crop as outside it."""
+    src = tmp_path / "s.jpg"
+    Image.new("RGB", (1000, 1000)).save(src)
+    out = tmp_path / "o.jpg"
+    # 0.4% off square, inside the guard, so x and y scales genuinely differ.
+    Image.new("RGB", (2000, 1992)).save(out)
+    qa_dir = tmp_path / "qa"
+    r = run_cli("--pair", src, out, "--crop", "Tall:0,0,100,100",
+                "--static", "--out-dir", qa_dir, "--json")
+    assert r.returncode == 0, r.stderr
+    assert json.loads(r.stdout)["callouts"] == 1
+
+
+@pytest.mark.needs_pillow
+def test_key_does_not_depend_on_the_working_directory(tmp_path):
+    project = tmp_path / "work" / "grandma"
+    project.mkdir(parents=True)
+    renders = tmp_path / "work" / "renders"
+    renders.mkdir()
+    Image.new("RGB", (40, 30)).save(project / "src.jpg")
+    Image.new("RGB", (80, 60)).save(renders / "t.jpg")
+    pair = {"render": renders / "t.jpg", "source": project / "src.jpg"}
+    first = qa_page.pair_key(pair, project)
+    second = qa_page.pair_key(pair, project)
+    assert first == second
+    assert not first.startswith("/"), "keys should be relative to the project, not absolute"

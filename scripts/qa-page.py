@@ -103,31 +103,29 @@ def parse_crop(spec):
             "label": label, "id": slug(label), "box": box}
 
 
-def resolve_entry_path(entry, project):
-    """Find a manifest path without guessing twice about its base.
+def resolve_asset(source, output, project):
+    """Resolve a recorded source and output against one base directory.
 
-    finalize.py records whatever it was given, so an entry may be absolute, relative
-    to the project, or relative to the project's parent. Trying the candidates in
-    order beats prefixing blindly, which turns `grandma/source/x.jpg` into
-    `grandma/grandma/source/x.jpg`.
+    finalize.py records whatever paths it was given, so an entry may be absolute, or
+    relative to the project or to the project's parent. Resolving both together keeps
+    them consistent: choosing a base per path can match the project's own
+    `source/x.jpg` while the recorded one was the parent's, and the review would then
+    judge a different photograph than the finalizer restored.
+
+    The working directory is deliberately never a base, so the verdict log does not
+    depend on where the command was run.
     """
-    path = Path(entry)
-    if path.is_absolute():
-        return path if path.exists() else None
+    src, out = Path(source), Path(output)
+    if src.is_absolute() and out.is_absolute():
+        return (src, out) if src.exists() and out.exists() else (None, None)
+
     project = project.resolve()
-    # The project first: a cwd-relative file that happens to share a name must not
-    # win, or reviewing project B can show project A's photographs.
-    bases = [project, project.parent, *project.parents]
-    for base in bases:
-        candidate = base / path
-        if candidate.exists():
-            return candidate
-    cwd_candidate = path.resolve()
-    try:
-        cwd_candidate.relative_to(project)
-    except ValueError:
-        return None          # outside the project: not ours to trust
-    return cwd_candidate if cwd_candidate.exists() else None
+    for base in (project, project.parent, *project.parents):
+        candidate_src = src if src.is_absolute() else base / src
+        candidate_out = out if out.is_absolute() else base / out
+        if candidate_src.exists() and candidate_out.exists():
+            return candidate_src, candidate_out
+    return None, None
 
 
 def pairs_from_manifest(project):
@@ -148,7 +146,7 @@ def pairs_from_manifest(project):
         if asset.get("verification") == "fail":
             # A failed verification is not something to review as a candidate.
             continue
-        src, out = resolve_entry_path(source, project), resolve_entry_path(output, project)
+        src, out = resolve_asset(source, output, project)
         if not src or not out:
             continue
         key = (str(src.resolve()), str(out.resolve()))
@@ -198,9 +196,13 @@ def pair_key(pair, root):
     `a/output/render.png` against `b/output/render.png`.
     """
     render = Path(pair["render"]).resolve()
-    for base in (root, Path.cwd()):
+    root_path = Path(root).resolve()
+    # The project, then its parent, then nothing: falling back to the working
+    # directory would give the same file two keys depending on where the command ran,
+    # and the verdict log would disagree with itself.
+    for base in (root_path, root_path.parent):
         try:
-            return str(render.relative_to(Path(base).resolve()))
+            return str(render.relative_to(base))
         except ValueError:
             continue
     return str(render)
@@ -665,9 +667,10 @@ async function record(card){
       // Acknowledged lines are already on disk; only failures need the log, or the
       // page would later claim its own recorded verdicts were never sent.
       showStatus(card, `recorded ${payload.verdict} (pass ${PASS})`);
-      // Only the line that just succeeded is cleared: an older pending request
-      // failing afterwards must not resurrect a stale recovery line either.
-      if (failed.get(payload.photo) === line) { failed.delete(payload.photo); renderLog(); }
+      // The map holds one line per photo, always the newest attempt's. A success
+      // clears it regardless of which line it was: leaving an older failure would
+      // offer a superseded verdict for import under a fresh pass.
+      if (attempts.get(payload.photo) === attempt && failed.delete(payload.photo)) renderLog();
     } catch (err) {
       showStatus(card, 'could not record: ' + err.message + ' -- the line is in the log below');
       // Only the newest attempt may claim the log: an older request that fails
@@ -1057,31 +1060,24 @@ def import_file(path, out_dir, records):
         staged.append(record)
         if record.get("ts"):
             explicit.append((len(staged), record["ts"]))
-    # An unstamped record must sit where the file puts it. Stamping it "now" lets
-    # it outrank an explicit older timestamp that follows it, turning a correction
-    # into the stale verdict.
-    for index, record in enumerate(staged, 1):
+    # An unstamped record must sit where the file puts it. Walking backwards with a
+    # running bound gives every unstamped record in a block a strictly smaller stamp
+    # than the one after it, so file order survives whatever the neighbours carry.
+    bound = None
+    for record in reversed(staged):
         if record.get("ts"):
-            continue
-        later = next((ts for pos, ts in explicit if pos > index), None)
-        if later:
             try:
-                reference = datetime.fromisoformat(later.replace("Z", "+00:00"))
-                # Offset downwards by how far this line sits from that reference, so
-                # the block still increases: earlier lines get the smaller stamp.
-                behind = sum(1 for pos, _ in explicit if pos > index) - 1
-                record["ts"] = (reference
-                                - timedelta(microseconds=behind + 1)).isoformat()
-                continue
+                bound = datetime.fromisoformat(record["ts"].replace("Z", "+00:00"))
             except ValueError:
-                pass
-        earlier = next((ts for pos, ts in reversed(explicit) if pos < index), None)
-        try:
-            base = (datetime.fromisoformat(earlier.replace("Z", "+00:00"))
-                    if earlier else datetime.now().astimezone())
-            record["ts"] = (base + timedelta(microseconds=index)).isoformat()
-        except ValueError:
-            record["ts"] = datetime.now().astimezone().isoformat()
+                bound = None
+            continue
+        if bound is None:
+            base = datetime.now().astimezone().replace(microsecond=0)
+            record["ts"] = base.isoformat()
+            bound = base
+            continue
+        bound = bound - timedelta(microseconds=1)
+        record["ts"] = bound.isoformat()
     for record in staged:
         append_record(verdict_path(out_dir), record)
     added = len(staged)

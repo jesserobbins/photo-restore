@@ -36,7 +36,7 @@ import tempfile
 import threading
 import time
 import webbrowser
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
@@ -120,7 +120,16 @@ def resolve_asset(source, output, project):
         return (src, out) if src.exists() and out.exists() else (None, None)
 
     project = project.resolve()
-    for base in (project, project.parent, *project.parents):
+    # Bases come from the project and from whichever path is absolute: an entry can
+    # mix a relative source with an absolute output, and the absolute one's own
+    # ancestors are the only place that source can plausibly sit.
+    bases = []
+    for anchor in (project, project.parent, *project.parents,
+                   *(src.parents if src.is_absolute() else ()),
+                   *(out.parents if out.is_absolute() else ())):
+        if anchor not in bases:
+            bases.append(anchor)
+    for base in bases:
         candidate_src = src if src.is_absolute() else base / src
         candidate_out = out if out.is_absolute() else base / out
         if candidate_src.exists() and candidate_out.exists():
@@ -212,12 +221,14 @@ def assign_keys(pairs, root):
     seen = {}
     for pair in pairs:
         key = pair_key(pair, root)
-        if key in seen and seen[key] != str(Path(pair["render"]).resolve()):
+        identity = (str(Path(pair["source"]).resolve()),
+                    str(Path(pair["render"]).resolve()))
+        if key in seen and seen[key] != identity:
             die(
                 f"two photographs would share the verdict key {key!r}; "
                 "run them as separate reviews so their verdicts stay apart"
             )
-        seen[key] = str(Path(pair["render"]).resolve())
+        seen[key] = identity
         pair["photo"] = key
     return pairs
 
@@ -431,8 +442,10 @@ def order_key(record):
             parsed = datetime.fromisoformat(stamp.replace("Z", "+00:00"))
             # Compare instants, not strings: 10:00-07:00 is later than 16:00Z, and
             # string order says the opposite.
-            when = parsed.timestamp() if parsed.tzinfo else parsed.replace(
-                tzinfo=datetime.now().astimezone().tzinfo).timestamp()
+            # A naive timestamp is read as UTC. Using the machine's current offset
+            # makes the same record compare differently in summer and winter.
+            when = (parsed.timestamp() if parsed.tzinfo
+                    else parsed.replace(tzinfo=timezone.utc).timestamp())
         except ValueError:
             when = 0.0
     return (record.get("pass") or 0, when)
@@ -1044,7 +1057,6 @@ def import_file(path, out_dir, records):
     # Validate every line before writing any of them: a half-imported file would
     # leave the log in a state nobody asked for.
     staged = []
-    explicit = []
     for number, line in enumerate(path.read_text().splitlines(), 1):
         line = line.strip()
         if not line:
@@ -1058,8 +1070,6 @@ def import_file(path, out_dir, records):
             die(f"{path}: {problem}")
         record["pass"] = pass_no
         staged.append(record)
-        if record.get("ts"):
-            explicit.append((len(staged), record["ts"]))
     # An unstamped record must sit where the file puts it. Walking backwards with a
     # running bound gives every unstamped record in a block a strictly smaller stamp
     # than the one after it, so file order survives whatever the neighbours carry.
@@ -1072,7 +1082,19 @@ def import_file(path, out_dir, records):
                 bound = None
             continue
         if bound is None:
+            # No later record to anchor to. Place this block after the last explicit
+            # stamp in the file, or at now when the file has none, so a trailing
+            # correction never sorts before the record it corrects.
             base = datetime.now().astimezone().replace(microsecond=0)
+            explicit = [r["ts"] for r in staged if r.get("ts")]
+            for candidate in explicit:
+                try:
+                    parsed = datetime.fromisoformat(candidate.replace("Z", "+00:00"))
+                except ValueError:
+                    continue
+                if parsed.tzinfo is None:
+                    parsed = parsed.replace(tzinfo=timezone.utc)
+                base = max(base, parsed.astimezone() + timedelta(microseconds=1))
             record["ts"] = base.isoformat()
             bound = base
             continue
@@ -1149,7 +1171,11 @@ def main():
                               "verdicts": str(verdict_path(out_dir))}, indent=2))
         return 0 if added else 1
 
-    pairs = assign_keys(resolve_pairs(args), args.project or Path.cwd())
+    # The key root is where the verdict log lives, so the same photograph keeps one
+    # identity no matter which directory the command was launched from.
+    key_root = args.project or (args.out_dir.resolve().parent if args.out_dir
+                                else Path.cwd())
+    pairs = assign_keys(resolve_pairs(args), key_root)
     callouts = callouts_for([parse_crop(spec) for spec in args.crop], pairs)
     prior = latest_by_photo(records)
     out_dir.mkdir(parents=True, exist_ok=True)

@@ -1001,7 +1001,9 @@ def test_callout_scaling_is_independent_per_axis(tmp_path):
     # 0.4% off square, inside the guard, so x and y scales genuinely differ.
     Image.new("RGB", (2000, 1992)).save(out)
     qa_dir = tmp_path / "qa"
-    r = run_cli("--pair", src, out, "--crop", "Tall:0,0,100,100",
+    # Bottom-right corner: with the uniform width scale this maps past the render's
+    # 1992-pixel height and is rejected as outside the image.
+    r = run_cli("--pair", src, out, "--crop", "Corner:900,900,1000,1000",
                 "--static", "--out-dir", qa_dir, "--json")
     assert r.returncode == 0, r.stderr
     assert json.loads(r.stdout)["callouts"] == 1
@@ -1017,6 +1019,16 @@ def test_key_does_not_depend_on_the_working_directory(tmp_path):
     Image.new("RGB", (80, 60)).save(renders / "t.jpg")
     pair = {"render": renders / "t.jpg", "source": project / "src.jpg"}
     first = qa_page.pair_key(pair, project)
-    second = qa_page.pair_key(pair, project)
-    assert first == second
-    assert not first.startswith("/"), "keys should be relative to the project, not absolute"
+    assert not first.startswith("/"), "keys should be relative to the project"
+    # The CLI must anchor on the verdict log, not on the cwd it happens to run in.
+    qa_dir = tmp_path / "work" / "qa"
+    outs = []
+    for where in (tmp_path, project):
+        r = subprocess.run(
+            [sys.executable, str(SCRIPT), "--pair", str(project / "src.jpg"),
+             str(renders / "t.jpg"), "--static", "--out-dir", str(qa_dir), "--json"],
+            cwd=where, capture_output=True, text=True)
+        assert r.returncode == 0, r.stderr
+        html = Path(json.loads(r.stdout)["page"]).read_text()
+        outs.append(set(re.findall(r'data-photo="([^"]+)"', html)))
+    assert outs[0] == outs[1], f"key changed with cwd: {outs}"

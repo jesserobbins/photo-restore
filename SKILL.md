@@ -254,6 +254,11 @@ disclosure. Use the flat areas of the source as evidence and choose one row.
 | Absent in all areas | Only when the owner asks. Match the film stock | `reconstructed` |
 | Digital camera | Leave it alone | `none` |
 
+Record `preserved` only when you looked at a flat area of the source and saw grain
+there. When you did not look, or when the source has no grain, record `unknown` or
+`none`. A claim of preserved grain without that look is a fidelity claim without
+evidence.
+
 Grain in a file with no grain is an invention. It invents texture, not faces. Add
 grain only when the owner asks for it, only in the pattern of the film stock, and
 only with a disclosure in the delivery and in the provenance sentence. Recover weak

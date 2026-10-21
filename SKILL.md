@@ -1,16 +1,19 @@
 ---
 name: photo-restore
 description: >
-  Restore photographs as archive items, not only as pixels. Upscale, restore and
-  improve a photo with conservative settings. Keep the identity, the face, the
-  expression, the gaze, the pose, the body shape, the clothing, the composition
-  and the historical detail of each subject. Carry the metadata from the source
-  file: the capture date, the camera, the GPS fix, the caption and the keywords.
-  Name each output file after its source file, write a provenance record, keep
-  the film grain correct for the age of the photo, and move a result into Apple
-  Photos without damage. Use for upscaling, old photo restoration, scanned
-  prints, noise and grain work, deblurring and face-reference restoration.
-  Choose faithful recovery over a new reconstruction or a beautification.
+  Restore photographs as archive items, not only as pixels. Works with ChatGPT,
+  Codex, Claude Code, Gemini and other compatible AI agents, with no ComfyUI
+  workflow, no custom pipeline and no GPU server. Upscale, restore and improve a
+  photo with conservative settings. Keep the identity, the face, the expression,
+  the gaze, the pose, the body shape, the clothing, the composition and the
+  historical detail of each subject. Guide the identity with reference photos.
+  Carry the EXIF, IPTC and XMP metadata from the source: the capture date, the
+  camera, the GPS fix, the caption and the keywords. Name each output file after
+  its source file, keep the original, write a provenance record, keep the film
+  grain correct for the age of the photo, and move a result into Apple Photos
+  without damage. Use for upscaling, old photo restoration, scanned prints, noise
+  and grain work, deblurring and face-reference restoration. Prioritize faithful
+  recovery over reconstruction, beautification or invented detail.
 metadata:
   version: "2.1.0"
   default-mode: "conservative"

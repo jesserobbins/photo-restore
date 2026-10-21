@@ -1,10 +1,47 @@
 # photo-restore
 
-An Agent Skill is a set of instructions that an AI agent reads and follows.
-photo-restore is an Agent Skill for restoring photographs with an image model.
+This skill provides powerful AI photo restoration, enhancement and upscaling with
+ChatGPT, Codex, Claude Code, Gemini and other compatible AI agents. It needs no
+repetitive prompting, no ComfyUI workflow, no custom pipeline and no dedicated GPU
+server.
 
-Restoration here means two things. The person in the photograph does not change.
-The information that the camera recorded does not get lost.
+Restore old photographs, upscale low-resolution images, enhance scanned prints,
+reduce noise, correct blur, preserve film grain and restore faces with reference
+photos. The workflow is repeatable and conservative. It produces a high-quality
+result and keeps the identity, the facial features, the expression, the gaze, the
+pose, the body proportions, the clothing, the composition and the historical
+authenticity of each subject.
+
+Start with a single photo. Use the optional features for more demanding work.
+
+- **Reference photographs.** Supply more face or body photos to guide an
+  identity-accurate restore. The skill keeps the expression, the pose and the
+  appearance of the source.
+- **Organized projects.** Use a fixed set of folders for the source images, the
+  reference photos, the restored files and the comparisons.
+- **Metadata preservation.** Carry the EXIF, IPTC and XMP metadata from the source,
+  including the capture date, the camera, the GPS coordinates, the caption and the
+  keywords.
+- **Automated file management.** Make each file name from its source file, keep the
+  originals, and record the provenance of the restore.
+- **Film grain management.** Keep the real photographic texture and use the film
+  characteristics of the period to set the grain treatment.
+- **Quality verification.** Compare the restored file against the source and the
+  references to find an unwanted change or an invented detail.
+- **Apple Photos integration.** Retrieve the original, keep the metadata, and import
+  the restored version without a change to the original.
+
+Use the skill directly for a simple restore. Use the project structure, the
+reference images and the verification tools for harder work.
+
+**Prioritize faithful recovery over reconstruction, beautification or invented
+detail.**
+
+An Agent Skill is a set of instructions that an AI agent reads and follows. This
+folder is one such skill, and it also holds scripts that make the metadata work
+checkable.
+
+## Motivation
 
 ## Motivation
 

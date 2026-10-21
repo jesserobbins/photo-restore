@@ -1,7 +1,9 @@
 # photo-restore
 
-> An Agent Skill for restoring photographs with an AI image model. It keeps the
-> person in the photograph unchanged and keeps the metadata that the camera wrote.
+> An Agent Skill for AI photo restoration, enhancement and upscaling with ChatGPT,
+> Codex, Claude Code, Gemini and other compatible agents. It keeps the identity of
+> each person, keeps the metadata that the camera wrote, and needs no ComfyUI
+> workflow or GPU server.
 
 ## About
 

@@ -713,27 +713,37 @@ def test_project_relative_path_wins_over_a_cwd_file(tmp_path, monkeypatch):
 
 def test_keys_are_unique_across_directories(tmp_path):
     pairs = []
-    for folder in ("a", "b"):
-        (tmp_path / folder).mkdir()
+    for folder in ("a/output", "b/output"):
+        (tmp_path / folder).mkdir(parents=True)
         render = tmp_path / folder / "render.png"
         Image.new("RGB", (40, 30)).save(render)
-        pairs.append({"photo": "render.png", "render": render,
-                      "source_stem": "src"})
-    qa_page.assign_keys(pairs)
+        pairs.append({"render": render, "source": tmp_path / folder / "src.png"})
+    qa_page.assign_keys(pairs, tmp_path)
     keys = [p["photo"] for p in pairs]
     assert len(set(keys)) == 2, keys
-    assert set(keys) == {"a/render.png", "b/render.png"}, keys
+    assert set(keys) == {"a/output/render.png", "b/output/render.png"}, keys
 
 
-def test_project_output_keeps_the_bare_filename(tmp_path):
-    """A project's output/ is the normal case, and it should read cleanly."""
+def test_same_directory_names_stay_distinct(tmp_path):
+    """`a/output/r.png` and `b/output/r.png` must not collapse."""
+    for folder in ("a/output", "b/output"):
+        (tmp_path / folder).mkdir(parents=True)
+        Image.new("RGB", (40, 30)).save(tmp_path / folder / "r.png")
+    keys = {qa_page.pair_key({"render": tmp_path / f / "r.png",
+                              "source": tmp_path / f / "s.png"}, tmp_path)
+            for f in ("a/output", "b/output")}
+    assert len(keys) == 2, keys
+
+
+def test_key_is_relative_to_the_project(tmp_path):
+    """Inside a project the key reads from the project root, and stays unique."""
     out_dir = tmp_path / "proj" / "output"
     out_dir.mkdir(parents=True)
     render = out_dir / "target_upscale.jpg"
     Image.new("RGB", (40, 30)).save(render)
-    pairs = [{"photo": "x", "render": render, "source": tmp_path / "proj" / "source" / "t.jpg"}]
-    qa_page.assign_keys(pairs)
-    assert pairs[0]["photo"] == "target_upscale.jpg"
+    pairs = [{"render": render, "source": tmp_path / "proj" / "source" / "t.jpg"}]
+    qa_page.assign_keys(pairs, tmp_path / "proj")
+    assert pairs[0]["photo"] == "output/target_upscale.jpg"
 
 
 def test_key_is_derived_from_the_pair_alone(tmp_path):
@@ -742,10 +752,11 @@ def test_key_is_derived_from_the_pair_alone(tmp_path):
         (tmp_path / folder).mkdir()
         Image.new("RGB", (40, 30)).save(tmp_path / folder / "render.png")
     alone = qa_page.assign_keys([{"render": tmp_path / "b" / "render.png",
-                                  "source": tmp_path / "b" / "src.png"}])
+                                  "source": tmp_path / "b" / "src.png"}], tmp_path)
     together = qa_page.assign_keys([
         {"render": tmp_path / "a" / "render.png", "source": tmp_path / "a" / "src.png"},
-        {"render": tmp_path / "b" / "render.png", "source": tmp_path / "b" / "src.png"}])
+        {"render": tmp_path / "b" / "render.png", "source": tmp_path / "b" / "src.png"}],
+        tmp_path)
     assert alone[0]["photo"] == together[1]["photo"] == "b/render.png"
 
 
@@ -858,7 +869,7 @@ def test_cli_gives_colliding_render_names_distinct_keys(tmp_path):
     html = Path(json.loads(r.stdout)["page"]).read_text()
     keys = set(re.findall(r'data-photo="([^"]+)"', html))
     assert len(keys) == 2, keys
-    assert any(k.startswith("a/") for k in keys) and any(k.startswith("b/") for k in keys), keys
+    assert all(k.endswith("render.png") for k in keys), keys
 
 
 @pytest.mark.needs_pillow

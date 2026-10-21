@@ -185,27 +185,38 @@ def resolve_pairs(args):
     die("nothing to review: pass --project DIR or --pair SOURCE RENDER")
 
 
-def pair_key(pair):
-    """A verdict key derived from the pair alone.
+def pair_key(pair, root):
+    """A verdict key derived from the pair and a fixed root, nothing else.
 
-    It must not depend on which other pairs are in the run: reviewing `a/render.png`
-    today and `b/render.png` tomorrow would otherwise hand the same key to different
-    photographs, so one would inherit the other's verdict and notes.
+    It must not depend on which other pairs happen to be in the run, or a later
+    review of one photograph inherits an earlier one's verdict. It must also be
+    unique, or two photographs collapse into one key and one of their verdicts
+    silently replaces the other.
 
-    A project writes its results to `output/`, so the filename alone is unique and
-    readable there. Anywhere else the directory is part of the key, which keeps
-    `a/render.png` and `b/render.png` apart without depending on what else is in the
-    run.
+    A path relative to the project (or the working directory when there is no
+    project) satisfies both: stable across runs and distinct per file, including
+    `a/output/render.png` against `b/output/render.png`.
     """
     render = Path(pair["render"]).resolve()
-    if render.parent.name == "output":
-        return render.name
-    return f"{render.parent.name}/{render.name}"
+    for base in (root, Path.cwd()):
+        try:
+            return str(render.relative_to(Path(base).resolve()))
+        except ValueError:
+            continue
+    return str(render)
 
 
-def assign_keys(pairs):
+def assign_keys(pairs, root):
+    seen = {}
     for pair in pairs:
-        pair["photo"] = pair_key(pair)
+        key = pair_key(pair, root)
+        if key in seen and seen[key] != str(Path(pair["render"]).resolve()):
+            die(
+                f"two photographs would share the verdict key {key!r}; "
+                "run them as separate reviews so their verdicts stay apart"
+            )
+        seen[key] = str(Path(pair["render"]).resolve())
+        pair["photo"] = key
     return pairs
 
 
@@ -342,13 +353,14 @@ def build_pairs(pairs, callouts, prior, workdir):
         render_img = open_display(out)
         if not source_img or not render_img:
             die(f"could not read one of {src} / {out}")
-        scale = b_disp[0] / a_disp[0]
+        scale_x = b_disp[0] / a_disp[0]
+        scale_y = b_disp[1] / a_disp[1]
 
         tiles = []
         for callout in callouts.get(pair["photo"], {}).values():
             l, t, r, b = callout["box"]
-            render_box = (round(l * scale), round(t * scale),
-                          round(r * scale), round(b * scale))
+            render_box = (round(l * scale_x), round(t * scale_y),
+                          round(r * scale_x), round(b * scale_y))
             before = open_display(src, (l, t, r, b))
             after = open_display(out, render_box)
             if not before or not after:
@@ -581,7 +593,8 @@ const MODE = "__MODE__";
 const TOKEN = "__TOKEN__";
 const PASS = __PASS__;
 let inFlight = 0;      // record requests still open
-const failed = new Map();  // photo -> the line the server never accepted
+const failed = new Map();   // photo -> the line the server never accepted
+const attempts = new Map(); // photo -> latest attempt number
 const NEWLINE = String.fromCharCode(10);  // avoids escape nesting in this template
 
 function renderLog(){
@@ -641,6 +654,8 @@ async function record(card){
   if (Object.keys(payload.callouts).length) record.callouts = payload.callouts;
   const line = JSON.stringify(record);
 
+  const attempt = (attempts.get(payload.photo) || 0) + 1;
+  attempts.set(payload.photo, attempt);
   if (MODE === 'serve'){
     inFlight++;
     try {
@@ -655,9 +670,12 @@ async function record(card){
       if (failed.get(payload.photo) === line) { failed.delete(payload.photo); renderLog(); }
     } catch (err) {
       showStatus(card, 'could not record: ' + err.message + ' -- the line is in the log below');
-      // One line per photo, so a retry that succeeds supersedes the stale failure.
-      failed.set(payload.photo, line);
-      renderLog();
+      // Only the newest attempt may claim the log: an older request that fails
+      // after a newer one succeeded must not offer a stale verdict for import.
+      if (attempts.get(payload.photo) === attempt){
+        failed.set(payload.photo, line);
+        renderLog();
+      }
     } finally {
       inFlight--;
     }
@@ -1048,8 +1066,12 @@ def import_file(path, out_dir, records):
         later = next((ts for pos, ts in explicit if pos > index), None)
         if later:
             try:
-                record["ts"] = (datetime.fromisoformat(later.replace("Z", "+00:00"))
-                                - timedelta(microseconds=index)).isoformat()
+                reference = datetime.fromisoformat(later.replace("Z", "+00:00"))
+                # Offset downwards by how far this line sits from that reference, so
+                # the block still increases: earlier lines get the smaller stamp.
+                behind = sum(1 for pos, _ in explicit if pos > index) - 1
+                record["ts"] = (reference
+                                - timedelta(microseconds=behind + 1)).isoformat()
                 continue
             except ValueError:
                 pass
@@ -1131,7 +1153,7 @@ def main():
                               "verdicts": str(verdict_path(out_dir))}, indent=2))
         return 0 if added else 1
 
-    pairs = assign_keys(resolve_pairs(args))
+    pairs = assign_keys(resolve_pairs(args), args.project or Path.cwd())
     callouts = callouts_for([parse_crop(spec) for spec in args.crop], pairs)
     prior = latest_by_photo(records)
     out_dir.mkdir(parents=True, exist_ok=True)

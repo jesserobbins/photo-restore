@@ -578,9 +578,10 @@ const TOKEN = "__TOKEN__";
 const PASS = __PASS__;
 let inFlight = 0;      // record requests still open
 const failed = new Map();  // photo -> the line the server never accepted
+const NEWLINE = String.fromCharCode(10);  // avoids escape nesting in this template
 
 function renderLog(){
-  document.getElementById('log').value = Array.from(failed.values()).join('\n');
+  document.getElementById('log').value = Array.from(failed.values()).join(NEWLINE);
 }
 
 function setSlider(root, ratio){

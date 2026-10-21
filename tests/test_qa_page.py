@@ -896,3 +896,18 @@ def test_nested_project_path_resolves_from_inside_the_project(tmp_path):
     pairs = qa_page.pairs_from_manifest(nested)
     assert len(pairs) == 1
     assert pairs[0]["source"] == nested / "source" / "t.jpg"
+
+
+@pytest.mark.needs_pillow
+def test_generated_script_is_syntactically_valid(tmp_path):
+    """Cheap guard: a JSON-escaped backslash once turned a JS string into a newline."""
+    if shutil.which("node") is None:
+        pytest.skip("needs node")
+    src, out = make_pair(tmp_path)
+    r = run_cli("--pair", src, out, "--static", "--out-dir", tmp_path / "qa", "--json")
+    html = Path(json.loads(r.stdout)["page"]).read_text()
+    script = html.split("<script>")[1].split("</script>")[0]
+    js = tmp_path / "page.js"
+    js.write_text(script)
+    check = subprocess.run(["node", "--check", str(js)], capture_output=True, text=True)
+    assert check.returncode == 0, check.stderr

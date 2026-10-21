@@ -62,9 +62,11 @@ brew install osxphotos   # macOS only
 - **Refuses to invent people.** Identity, expression, gaze, pose, body
   proportions, clothing, and background are treated as invariants. A softer
   result that still looks like the person beats a sharp one that does not.
-- **Carries the archive forward.** Capture date, camera, GPS, rating, keywords,
-  caption, and ICC profile are copied from the source, corrected only where the
-  upscale made them false, and verified against the real pixels.
+- **Carries the archive forward.** Capture date, camera, GPS, rating, keywords, and
+  caption are copied from the source, corrected only where the upscale made them
+  false, and verified against the real pixels. Colour profile follows the pixels:
+  the render's own profile is kept, and the source's is dropped rather than pasted
+  onto pixels it no longer describes.
 - **Records provenance.** One sentence saying when and where the upscale
   happened, written into `Software`, `CreatorTool`, `UserComment`,
   `XMP-xmpMM:History`, and appended to the caption and keywords. The capture date

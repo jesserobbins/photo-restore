@@ -87,7 +87,8 @@ def test_parse_crop_rejects_bad_specs(spec):
 
 def test_callouts_expand_bare_form_to_every_photo():
     crops = [qa_page.parse_crop("Eyes:0,0,10,10")]
-    by_photo = qa_page.callouts_for(crops, ["a", "b"])
+    pairs = [{"photo": "a", "source_stem": "a"}, {"photo": "b", "source_stem": "b"}]
+    by_photo = qa_page.callouts_for(crops, pairs)
     assert set(by_photo) == {"a", "b"}
     assert by_photo["a"]["eyes"]["box"] == (0, 0, 10, 10)
 
@@ -96,20 +97,21 @@ def test_duplicate_slug_with_different_boxes_is_refused():
     crops = [qa_page.parse_crop("a:Left eye:0,0,10,10"),
              qa_page.parse_crop("a:left-eye:20,20,40,40")]
     with pytest.raises(SystemExit) as exc:
-        qa_page.callouts_for(crops, ["a"])
+        qa_page.callouts_for(crops, [{"photo": "a", "source_stem": "a"}])
     assert exc.value.code == 2
 
 
 def test_same_slug_and_same_box_is_allowed():
     crops = [qa_page.parse_crop("a:Left eye:0,0,10,10"),
              qa_page.parse_crop("a:left-eye:0,0,10,10")]
-    assert len(qa_page.callouts_for(crops, ["a"])["a"]) == 1
+    pairs = [{"photo": "a", "source_stem": "a"}]
+    assert len(qa_page.callouts_for(crops, pairs)["a"]) == 1
 
 
 def test_crop_naming_an_unknown_photo_is_refused():
     crops = [qa_page.parse_crop("ghost:Eyes:0,0,10,10")]
     with pytest.raises(SystemExit) as exc:
-        qa_page.callouts_for(crops, ["a"])
+        qa_page.callouts_for(crops, [{"photo": "a", "source_stem": "a"}])
     assert exc.value.code == 2
 
 
@@ -189,7 +191,10 @@ def test_manifest_pairing_uses_recorded_source_and_output(tmp_path):
     }))
     pairs = qa_page.pairs_from_manifest(project)
     assert len(pairs) == 1
-    assert pairs[0]["photo"] == "target"
+    # The verdict key is the output stem, which is unique per variant; the source
+    # stem stays available for naming callouts.
+    assert pairs[0]["photo"] == "target_upscale"
+    assert pairs[0]["source_stem"] == "target"
 
 
 def test_manifest_pairing_skips_failed_verifications(tmp_path):
@@ -422,3 +427,186 @@ def test_serve_exits_1_when_nothing_was_recorded(tmp_path):
     out_text, _ = proc.communicate(timeout=30)
     assert proc.returncode == 1, out_text
     assert "no verdicts recorded" in out_text
+
+
+# --------------------------------------------------------------------------- #
+# regressions found in review
+# --------------------------------------------------------------------------- #
+
+@pytest.mark.needs_pillow
+def test_every_slider_contains_its_range_input(tmp_path):
+    """The range input must be inside .slider; as a sibling the page's JS throws."""
+    src, out = make_pair(tmp_path)
+    r = run_cli("--pair", src, out, "--static", "--out-dir", tmp_path / "qa", "--json")
+    html = Path(json.loads(r.stdout)["page"]).read_text()
+    assert 'class="slider"' in html
+    for chunk in html.split('class="slider"')[1:]:
+        block = chunk.split('class="callouts"')[0]
+        assert "input type=\"range\"" in block, "range input left outside the slider"
+
+
+@pytest.mark.needs_pillow
+def test_hostile_filename_cannot_inject_markup(tmp_path):
+    """A filename is data. It must never become an element in a page full of photos."""
+    evil = tmp_path / "<img src=x onerror=alert(1)>.jpg"
+    Image.new("RGB", (40, 30)).save(evil)
+    out = tmp_path / "out.jpg"
+    Image.new("RGB", (80, 60)).save(out)
+    r = run_cli("--pair", evil, out, "--crop", '<script>x</script>:0,0,10,10',
+                "--static", "--out-dir", tmp_path / "qa", "--json")
+    assert r.returncode == 0, r.stderr
+    html = Path(json.loads(r.stdout)["page"]).read_text()
+    # Escaped text still contains the words; what must not exist is an element.
+    assert "<img src=x" not in html, "the filename became an element"
+    assert "<script>x</script>" not in html, "the label became an element"
+    assert "&lt;img src=x onerror=alert(1)&gt;" in html
+
+
+@pytest.mark.needs_pillow
+def test_two_outputs_of_one_source_get_distinct_verdict_keys(tmp_path):
+    src = tmp_path / "target.jpg"
+    Image.new("RGB", (40, 30)).save(src)
+    out_a = tmp_path / "target_upscale.jpg"
+    out_b = tmp_path / "target_enhance.jpg"
+    for path in (out_a, out_b):
+        Image.new("RGB", (80, 60)).save(path)
+    qa_dir = tmp_path / "qa"
+    r = run_cli("--pair", src, out_a, "--pair", src, out_b,
+                "--static", "--out-dir", qa_dir, "--json")
+    assert r.returncode == 0, r.stderr
+    summary = json.loads(r.stdout)
+    assert summary["pairs"] == 2
+    html = Path(summary["page"]).read_text()
+    assert 'data-photo="target_upscale"' in html
+    assert 'data-photo="target_enhance"' in html
+    # Distinct radio groups, so one choice cannot satisfy both cards.
+    assert html.count('name="v0"') == 3
+    assert html.count('name="v1"') == 3
+
+
+def test_manifest_relative_paths_resolve_against_the_project(tmp_path):
+    project = tmp_path / "proj"
+    (project / "source").mkdir(parents=True)
+    (project / "output").mkdir()
+    Image.new("RGB", (40, 30)).save(project / "source" / "t.jpg")
+    Image.new("RGB", (80, 60)).save(project / "output" / "t_upscale.jpg")
+    (project / "manifest.json").write_text(json.dumps({"assets": [{
+        "source": "source/t.jpg", "output": "output/t_upscale.jpg",
+        "verification": "pass"}]}))
+    pairs = qa_page.pairs_from_manifest(project)
+    assert len(pairs) == 1
+    assert pairs[0]["photo"] == "t_upscale"
+
+
+@pytest.mark.parametrize("record,ok", [
+    ({"photo": ["a"], "verdict": "approve"}, False),
+    ({"photo": "", "verdict": "approve"}, False),
+    ({"photo": "a", "verdict": "approve", "ts": 12345}, False),
+    ({"photo": "a", "verdict": "approve", "pass": "1"}, False),
+])
+def test_validate_record_rejects_wrong_types(record, ok):
+    assert (qa_page.validate_record(record) is None) is ok
+
+
+def test_newer_pass_wins_even_without_a_timestamp():
+    records = [
+        {"photo": "a", "verdict": "approve", "pass": 1, "ts": "2026-01-02T00:00:00"},
+        {"photo": "a", "verdict": "reject", "pass": 2},
+    ]
+    assert qa_page.latest_by_photo(records)["a"]["verdict"] == "reject"
+
+
+@pytest.mark.needs_pillow
+def test_clean_removes_every_generated_page(tmp_path):
+    src, out = make_pair(tmp_path)
+    qa_dir = tmp_path / "qa"
+    run_cli("--pair", src, out, "--static", "--out-dir", qa_dir, "--json")
+    qa_page.append_record(qa_dir / "verdicts.jsonl",
+                          {"photo": out.stem, "verdict": "needs-work", "pass": 1})
+    run_cli("--pair", src, out, "--static", "--out-dir", qa_dir, "--json")
+    assert len(list(qa_dir.glob("review-pass*.html"))) == 2, "a second pass has its own page"
+    run_cli("--clean", "--out-dir", qa_dir)
+    assert not list(qa_dir.glob("review-pass*.html")), "an earlier page was orphaned"
+
+
+def test_bomb_guard_is_disabled_for_archival_sizes():
+    from PIL import Image
+    assert Image.MAX_IMAGE_PIXELS is None
+
+
+# --------------------------------------------------------------------------- #
+# the page's JavaScript, executed for real
+# --------------------------------------------------------------------------- #
+
+def _playwright_node_path():
+    """Where a playwright install can be found, or None.
+
+    The structural tests above can tell that the markup is right; only a browser
+    can tell that the script runs. A markup-only assertion is exactly how a page
+    that threw on load once passed this suite.
+    """
+    if shutil.which("node") is None:
+        return None
+    candidates = [os.environ.get("NODE_PATH"),
+                  str(Path(__file__).resolve().parent.parent / "node_modules")]
+    for candidate in filter(None, candidates):
+        probe = subprocess.run(["node", "-e", "require.resolve('playwright')"],
+                               env={**os.environ, "NODE_PATH": candidate},
+                               capture_output=True)
+        if probe.returncode == 0:
+            return candidate
+    return None
+
+
+NODE_PATH = _playwright_node_path()
+
+BROWSER_CHECK = """
+const { chromium } = require('playwright');
+(async () => {
+  const browser = await chromium.launch();
+  const page = await browser.newPage();
+  const errors = [];
+  page.on('pageerror', e => errors.push('pageerror: ' + e.message));
+  page.on('console', m => { if (m.type() === 'error') errors.push('console: ' + m.text()); });
+  await page.goto(process.argv[2]);
+  const cards = await page.locator('.card').count();
+  const clipBefore = await page.locator('.after').first().evaluate(el => el.style.clipPath);
+  await page.locator('.slider').first().click({ position: { x: 20, y: 20 } });
+  const clipAfter = await page.locator('.after').first().evaluate(el => el.style.clipPath);
+  await page.locator('.card input[value="needs-work"]').first().check();
+  await page.locator('.tile textarea').first().fill('gaze drifted');
+  await page.locator('[data-action=record]').first().click();
+  await page.waitForTimeout(250);
+  const log = await page.locator('#log').inputValue();
+  console.log(JSON.stringify({ cards, clipBefore, clipAfter, log, errors }));
+  await browser.close();
+})();
+"""
+
+
+@pytest.mark.needs_pillow
+@pytest.mark.skipif(NODE_PATH is None, reason="needs node with playwright installed")
+def test_page_script_runs_and_records_in_a_browser(tmp_path):
+    src, out = make_pair(tmp_path)
+    qa_dir = tmp_path / "qa"
+    r = run_cli("--pair", src, out, "--crop", "Face:0,0,40,30",
+                "--static", "--out-dir", qa_dir, "--json")
+    assert r.returncode == 0, r.stderr
+    page = Path(json.loads(r.stdout)["page"])
+
+    script = tmp_path / "check.js"
+    script.write_text(BROWSER_CHECK)
+    probe = subprocess.run(
+        ["node", str(script), page.resolve().as_uri()],
+        env={**os.environ, "NODE_PATH": NODE_PATH}, capture_output=True, text=True,
+        timeout=120,
+    )
+    assert probe.returncode == 0, probe.stderr
+    result = json.loads(probe.stdout)
+
+    assert result["errors"] == [], f"the page threw: {result['errors']}"
+    assert result["cards"] == 1
+    assert result["clipBefore"] != result["clipAfter"], "the slider did not respond"
+    line = json.loads(result["log"])
+    assert line["verdict"] == "needs-work"
+    assert line["callouts"] == {"face": "gaze drifted"}

@@ -32,6 +32,7 @@ import shutil
 import socket
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import webbrowser
@@ -41,6 +42,12 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 VERSION = "2.1"
+
+# A review page for a 460 MP archival upscale is the intended use, not a
+# decompression bomb. Pillow would refuse it at ~179 MP.
+from PIL import Image as _PIL
+
+_PIL.MAX_IMAGE_PIXELS = None
 PROG = f"photo-restore {VERSION}"
 VERDICTS = "verdicts.jsonl"
 FILES_MANIFEST = ".qa-page-files"
@@ -107,14 +114,18 @@ def pairs_from_manifest(project):
         if asset.get("verification") == "fail":
             # A failed verification is not something to review as a candidate.
             continue
-        src, out = Path(source), Path(output)
+        # finalize.py records whatever paths it was given, so a relative entry is
+        # relative to the project, not to wherever this review is launched from.
+        src = Path(source) if Path(source).is_absolute() else project / source
+        out = Path(output) if Path(output).is_absolute() else project / output
         if not src.exists() or not out.exists():
             continue
         key = (str(src.resolve()), str(out.resolve()))
         if key in seen:
             continue
         seen.add(key)
-        pairs.append({"photo": src.stem, "source": src, "render": out,
+        pairs.append({"photo": out.stem, "source_stem": src.stem,
+                      "source": src, "render": out,
                       "note": asset.get("verification", "")})
     if not pairs:
         die(
@@ -134,7 +145,8 @@ def resolve_pairs(args):
             die(f"source not found: {src}")
         if not out.exists():
             die(f"render not found: {out}")
-        pairs.append({"photo": src.stem, "source": src, "render": out, "note": ""})
+        pairs.append({"photo": out.stem, "source_stem": src.stem,
+                      "source": src, "render": out, "note": ""})
     if pairs:
         return pairs
     if args.project:
@@ -142,14 +154,26 @@ def resolve_pairs(args):
     die("nothing to review: pass --project DIR or --pair SOURCE RENDER")
 
 
-def callouts_for(crops, photos):
-    """Attach callouts to photos, expanding the bare form to every photo."""
+def callouts_for(crops, pairs):
+    """Attach callouts to photo keys, expanding the bare form to every photo.
+
+    A crop may name the source stem, which fans out to every output of that source,
+    or the output stem, which selects one variant.
+    """
+    keys = [pair["photo"] for pair in pairs]
+    alias = {}
+    for pair in pairs:
+        alias.setdefault(pair["source_stem"], []).append(pair["photo"])
+        alias.setdefault(pair["photo"], []).append(pair["photo"])
     by_photo = {}
     for crop in crops:
-        targets = [crop["photo"]] if crop["photo"] else list(photos)
+        if crop["photo"]:
+            targets = alias.get(crop["photo"])
+            if not targets:
+                die(f"--crop names photo {crop['photo']!r}, which is not in this run")
+        else:
+            targets = list(keys)
         for photo in targets:
-            if photo not in photos:
-                die(f"--crop names photo {photo!r}, which is not in this run")
             entry = dict(crop, photo=photo)
             bucket = by_photo.setdefault(photo, {})
             if entry["id"] in bucket and bucket[entry["id"]]["box"] != entry["box"]:
@@ -164,6 +188,50 @@ def callouts_for(crops, photos):
 # --------------------------------------------------------------------------- #
 # images
 # --------------------------------------------------------------------------- #
+
+def displayed_size(path):
+    """Dimensions as a viewer shows them.
+
+    Pillow's TIFF plugin already swaps the reported size for orientations 5-8, so
+    applying the orientation again would read a portrait scan as landscape. Every
+    other format reports raw dimensions and needs the swap.
+    """
+    from PIL import Image
+
+    with Image.open(path) as im:
+        raw = (im.width, im.height)
+        orientation = im.getexif().get(274)
+        if (im.format or "").upper() == "TIFF":
+            return raw
+    if orientation in (5, 6, 7, 8):
+        return raw[1], raw[0]
+    return raw
+
+
+def readable_image(path, workdir):
+    """A path Pillow can open, decoding HEIC through a system tool if needed."""
+    from PIL import Image
+
+    try:
+        with Image.open(path):
+            return path
+    except Exception:
+        pass
+    if path.suffix.lower() not in {".heic", ".heif", ".hif", ".avif"}:
+        raise SystemExit(f"cannot read {path}")
+    target = workdir / (path.stem + "_decoded.png")
+    for tool, argv in (
+        ("magick", ["magick", str(path), str(target)]),
+        ("sips", ["sips", "-s", "format", "png", str(path), "--out", str(target)]),
+    ):
+        if shutil.which(tool) and subprocess.run(argv, capture_output=True).returncode == 0 \
+                and target.exists():
+            return target
+    raise SystemExit(
+        f"cannot read {path.name}: Pillow has no HEIC decoder and neither ImageMagick "
+        "nor sips is available"
+    )
+
 
 def open_display(path, box=None):
     """Yield (bytes, width, height) for display, cropping box in source pixels."""
@@ -194,15 +262,14 @@ def encode_png(im):
     return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
 
 
-def build_pairs(pairs, callouts, prior):
+def build_pairs(pairs, callouts, prior, workdir):
     from PIL import Image
 
     built = []
     for pair in pairs:
-        src, out = pair["source"], pair["render"]
-        with Image.open(src) as a, Image.open(out) as b:
-            a_disp = (a.width, a.height) if a.getexif().get(274) in (5, 6, 7, 8) else (a.width, a.height)
-            b_disp = (b.width, b.height) if b.getexif().get(274) in (5, 6, 7, 8) else (b.width, b.height)
+        src, out = readable_image(pair["source"], workdir), readable_image(pair["render"], workdir)
+        a_disp = displayed_size(src)
+        b_disp = displayed_size(out)
         if abs(a_disp[0] / a_disp[1] - b_disp[0] / b_disp[1]) > 0.005:
             die(
                 f"{src.name} and {out.name} differ in aspect ratio by more than 0.5%; "
@@ -238,6 +305,7 @@ def build_pairs(pairs, callouts, prior):
 
         built.append({
             "photo": pair["photo"],
+            "anchor": slug(pair["photo"]) or "photo",
             "source_name": src.name,
             "render_name": out.name,
             "verification": pair.get("note", ""),
@@ -272,12 +340,23 @@ def read_verdicts(path):
     return records
 
 
+def order_key(record):
+    """Pass first, then timestamp.
+
+    Sorting on timestamp alone lets an older approval outrank a newer rejection
+    when a record arrives without one, and mixed timezone offsets sort wrongly as
+    strings. Pass is the reviewer's own ordering and is always an integer.
+    """
+    stamp = record.get("ts")
+    return (record.get("pass") or 0, stamp if isinstance(stamp, str) else "")
+
+
 def latest_by_photo(records):
-    """Most recent verdict per photo, and the pass it came from."""
+    """Most recent verdict per photo, ordered by pass then time."""
     latest = {}
-    for record in sorted(records, key=lambda r: r.get("ts", "")):
+    for record in sorted(records, key=order_key):
         photo = record.get("photo")
-        if photo and record.get("verdict") in VERDICT_CHOICES:
+        if isinstance(photo, str) and record.get("verdict") in VERDICT_CHOICES:
             latest[photo] = record
     return latest
 
@@ -286,8 +365,14 @@ def validate_record(record, line_no=None):
     where = f"line {line_no}: " if line_no else ""
     if not isinstance(record, dict):
         return f"{where}not a JSON object"
-    if not record.get("photo"):
-        return f"{where}missing photo"
+    photo = record.get("photo")
+    if not isinstance(photo, str) or not photo.strip():
+        return f"{where}photo must be a non-empty string"
+    stamp = record.get("ts")
+    if stamp is not None and not isinstance(stamp, str):
+        return f"{where}ts must be a string"
+    if record.get("pass") is not None and not isinstance(record.get("pass"), int):
+        return f"{where}pass must be an integer"
     if record.get("verdict") not in VERDICT_CHOICES:
         return f"{where}verdict must be one of {', '.join(VERDICT_CHOICES)}"
     callouts = record.get("callouts") or {}
@@ -432,6 +517,7 @@ function setSlider(root, ratio){
   handle.style.left = `${ratio * 100}%`;
   const range = root.querySelector('input[type=range]');
   if (range) range.value = Math.round(ratio * 1000);
+  else console.warn('slider has no range input');
 }
 
 document.querySelectorAll('.slider').forEach(root => {
@@ -445,7 +531,7 @@ document.querySelectorAll('.slider').forEach(root => {
   root.addEventListener('pointermove', e => { if (dragging) paint(e.clientX); });
   root.addEventListener('pointerup', () => { dragging = false; });
   root.addEventListener('pointercancel', () => { dragging = false; });
-  range.addEventListener('input', () => setSlider(root, range.value / 1000));
+  if (range) range.addEventListener('input', () => setSlider(root, range.value / 1000));
   // Arrow keys work because the range input is focusable; the visual follows it.
   setSlider(root, 0.5);
 });
@@ -541,7 +627,7 @@ document.querySelectorAll('[data-action=done]').forEach(b => b.addEventListener(
 </html>
 """
 
-CARD = """<section class="card" id="p-__PHOTO__" data-photo="__PHOTO__">
+CARD = """<section class="card" id="p-__ANCHOR__" data-photo="__PHOTO__">
   <div class="head">
     <div>
       <div class="photo">__PHOTO__</div>
@@ -554,14 +640,14 @@ CARD = """<section class="card" id="p-__PHOTO__" data-photo="__PHOTO__">
     <span class="tag l">source</span>
     <span class="tag r">restored</span>
     <div class="handle"></div>
+    <input type="range" min="0" max="1000" value="500" aria-label="comparison position">
   </div>
-  <input type="range" min="0" max="1000" value="500" aria-label="comparison position for __PHOTO__">
   <div class="callouts">__TILES__</div>
   <div class="actions">
     <div class="verdicts">
-      <label data-v="approve"><input type="radio" name="v-__PHOTO__" value="approve"> approve</label>
-      <label data-v="needs-work"><input type="radio" name="v-__PHOTO__" value="needs-work"> needs work</label>
-      <label data-v="reject"><input type="radio" name="v-__PHOTO__" value="reject"> reject</label>
+      <label data-v="approve"><input type="radio" name="__GROUP__" value="approve"> approve</label>
+      <label data-v="needs-work"><input type="radio" name="__GROUP__" value="needs-work"> needs work</label>
+      <label data-v="reject"><input type="radio" name="__GROUP__" value="reject"> reject</label>
     </div>
     <button data-action="record">Record</button>
     <span class="status"></span>
@@ -582,15 +668,15 @@ TILE = """<div class="tile" data-id="__ID__">
 
 def render_page(title, pairs, mode, token, pass_no, submit_line, hint):
     cards, nav = [], []
-    for pair in pairs:
+    for index, pair in enumerate(pairs):
         tiles = []
         for tile in pair["callouts"]:
             prior_note = ""
             if pair.get("prior"):
                 prior_note = (pair["prior"].get("callouts") or {}).get(tile["id"], "")
             tiles.append(
-                TILE.replace("__ID__", tile["id"])
-                    .replace("__LABEL__", tile["label"])
+                TILE.replace("__ID__", escape(tile["id"]))
+                    .replace("__LABEL__", escape(tile["label"]))
                     .replace("__BEFORE_NOTE__", tile["before_note"])
                     .replace("__BEFORE__", tile["before"])
                     .replace("__AFTER__", tile["after"])
@@ -601,21 +687,25 @@ def render_page(title, pairs, mode, token, pass_no, submit_line, hint):
             verdict = pair["prior"].get("verdict")
             when = pair["prior"].get("ts", "")[:16].replace("T", " ")
             count = len(pair["prior"].get("callouts") or {})
-            prior = (f"previous pass ({when}): <strong>{verdict}</strong>"
+            prior = (f"previous pass ({escape(when)}): <strong>{escape(verdict)}</strong>"
                      + (f", {count} callout note{'s' if count != 1 else ''}" if count else ""))
         verified = f"· finalizer said {pair['verification']}" if pair["verification"] else ""
-        cards.append(
-            CARD.replace("__PHOTO__", pair["photo"])
-                .replace("__SRC__", pair["source_name"])
-                .replace("__OUT__", pair["render_name"])
-                .replace("__VERIFIED__", verified)
-                .replace("__BEFORE__", pair["source"])
-                .replace("__AFTER__", pair["render"])
-                .replace("__TILES__", "".join(tiles) or
-                         '<div class="hint">no callouts for this photo</div>')
-                .replace("__PRIOR__", prior)
-        )
-        nav.append(f'<a href="#p-{pair["photo"]}">{pair["photo"]}</a>')
+        card = CARD.replace("__PHOTO__", escape(pair["photo"]))
+        # Every value that reaches the markup is escaped: a filename is data, not
+        # HTML. An unescaped name would let a photo label run script in a page that
+        # holds the owner's photographs.
+        card = (card.replace("__ANCHOR__", escape(pair["anchor"]))
+                    .replace("__GROUP__", f"v{index}")
+                    .replace("__SRC__", escape(pair["source_name"]))
+                    .replace("__OUT__", escape(pair["render_name"]))
+                    .replace("__VERIFIED__", escape(verified))
+                    .replace("__BEFORE__", pair["source"])
+                    .replace("__AFTER__", pair["render"])
+                    .replace("__TILES__", "".join(tiles) or
+                             '<div class="hint">no callouts for this photo</div>')
+                    .replace("__PRIOR__", prior))
+        cards.append(card)
+        nav.append(f'<a href="#p-{escape(pair["anchor"])}">{escape(pair["photo"])}</a>')
 
     done_button = ('<button class="primary" data-action="done">Done — close review</button>'
                    if mode == "serve"
@@ -763,8 +853,17 @@ def lan_address():
 # --------------------------------------------------------------------------- #
 
 def write_files_manifest(out_dir, page_path):
-    record = {"generated": [str(page_path)], "version": PROG}
-    (Path(out_dir) / FILES_MANIFEST).write_text(json.dumps(record, indent=2) + "\n")
+    """Accumulate, so a second pass does not orphan the first pass's page."""
+    listing = Path(out_dir) / FILES_MANIFEST
+    generated = []
+    if listing.exists():
+        try:
+            generated = list(json.loads(listing.read_text()).get("generated", []))
+        except ValueError:
+            generated = []
+    if str(page_path) not in generated:
+        generated.append(str(page_path))
+    listing.write_text(json.dumps({"generated": generated, "version": PROG}, indent=2) + "\n")
 
 
 def clean(out_dir, include_verdicts):
@@ -879,12 +978,15 @@ def main():
         return 0 if added else 1
 
     pairs = resolve_pairs(args)
-    photos = [p["photo"] for p in pairs]
-    callouts = callouts_for([parse_crop(spec) for spec in args.crop], photos)
+    callouts = callouts_for([parse_crop(spec) for spec in args.crop], pairs)
     prior = latest_by_photo(records)
-    built = build_pairs(pairs, callouts, prior)
-
     out_dir.mkdir(parents=True, exist_ok=True)
+    workdir = Path(tempfile.mkdtemp(dir=out_dir, prefix=".qa-page-"))
+    try:
+        built = build_pairs(pairs, callouts, prior, workdir)
+    finally:
+        shutil.rmtree(workdir, ignore_errors=True)
+
     pass_no = next_pass(records)
     token = secrets.token_urlsafe(12)
     title = f"Review · pass {pass_no}"

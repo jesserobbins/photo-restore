@@ -153,5 +153,16 @@ whole URL the script printed, including the path segment after the port.
 the page fell back to logging. The lines are in the textarea; download and
 `--import` them.
 
+**I changed the page and want to check it still runs.** The Python tests check
+markup and the verdict log; only a browser can check the script. With node and
+playwright available:
+
+```sh
+NODE_PATH=/path/to/node_modules python3 -m pytest tests/ -q -k browser
+```
+
+Without playwright that test skips, and the markup tests still enforce that each
+slider owns its range input.
+
 **The review closed on its own.** `--idle-timeout` defaults to 30 minutes of no
 requests. Pass `--idle-timeout 0` to disable it.

@@ -303,19 +303,6 @@ Follow [references/qa-checklist.md](references/qa-checklist.md). At minimum:
   substituted; crunchy noise at edges means over-sharpening, not grain.
 - If the output fails **any** high-priority invariant, **reduce processing,
   mask the affected area, or use the conservative baseline**.
-- When a human is in the loop, put the judgement where they can make it: build the
-  review page and let them record a verdict rather than narrating what to look at.
-
-  ```sh
-  python scripts/qa-page.py --project <project> \
-    --crop "Face:60,40,300,300" --crop "Hands:150,250,420,390"
-  ```
-
-  A slider per photo, callout crops of the specific details, one verdict per photo
-  and a note per callout. The command returns when they press Done, and the
-  verdicts are in `qa/verdicts.jsonl` for you to read. On a host with no browser or
-  no reachable port, add `--static`, then `--import` what they download. Full
-  detail in [references/qa-page.md](references/qa-page.md).
 - Without a human, run `python scripts/compare.py original.jpg enhanced.png
   --out comparison.png --crop 100,80,300,320` for an aligned single-sheet
   comparison. Coordinates are in **original-image pixels**; crop is optional.
@@ -358,10 +345,30 @@ assert that metadata was preserved. Give the user the exact commands from
 [references/metadata-and-naming.md](references/metadata-and-naming.md) and say
 they were not run here.
 
-### 6a. Read the review, then offer to clean up
+### 6a. Put the judgement in front of the human
 
-If a review page was used, read `qa/verdicts.jsonl` before delivering. The last
-record per photo wins, and the callout notes name the specific defect:
+Metadata and geometry can be checked mechanically; whether the gaze drifted cannot.
+Once the file is finalized, build the review page so the owner records a verdict
+instead of being told what to look at:
+
+```sh
+python scripts/qa-page.py --project <project> \
+  --crop "Face:60,40,300,300" --crop "Hands:150,250,420,390"
+```
+
+A slider per photo, callout crops of the specific details, one verdict per photo,
+and a note per callout. The command returns when they press Done, and the verdicts
+are in `qa/verdicts.jsonl`. On a host with no browser or no reachable port, add
+`--static` and then `--import` what they download. Detail in
+[references/qa-page.md](references/qa-page.md).
+
+This runs after step 6 on purpose: a freshly scaffolded project has no finalized
+assets, so a review page built before the finalize step has nothing to show.
+
+### 6b. Read the review, then offer to clean up
+
+Read `qa/verdicts.jsonl` before delivering. The last record per photo wins, and the
+callout notes name the specific defect:
 
 - `reject` or `needs-work` means another pass. Use the callout notes rather than
   re-guessing what was wrong.

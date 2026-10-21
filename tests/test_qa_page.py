@@ -193,7 +193,7 @@ def test_manifest_pairing_uses_recorded_source_and_output(tmp_path):
     assert len(pairs) == 1
     # The verdict key is the output stem, which is unique per variant; the source
     # stem stays available for naming callouts.
-    assert pairs[0]["photo"] == "target_upscale"
+    assert pairs[0]["photo"] == "target_upscale.jpg"
     assert pairs[0]["source_stem"] == "target"
 
 
@@ -477,8 +477,8 @@ def test_two_outputs_of_one_source_get_distinct_verdict_keys(tmp_path):
     summary = json.loads(r.stdout)
     assert summary["pairs"] == 2
     html = Path(summary["page"]).read_text()
-    assert 'data-photo="target_upscale"' in html
-    assert 'data-photo="target_enhance"' in html
+    assert 'data-photo="target_upscale.jpg"' in html
+    assert 'data-photo="target_enhance.jpg"' in html
     # Distinct radio groups, so one choice cannot satisfy both cards.
     assert html.count('name="v0"') == 3
     assert html.count('name="v1"') == 3
@@ -495,7 +495,7 @@ def test_manifest_relative_paths_resolve_against_the_project(tmp_path):
         "verification": "pass"}]}))
     pairs = qa_page.pairs_from_manifest(project)
     assert len(pairs) == 1
-    assert pairs[0]["photo"] == "t_upscale"
+    assert pairs[0]["photo"] == "t_upscale.jpg"
 
 
 @pytest.mark.parametrize("record,ok", [
@@ -610,3 +610,76 @@ def test_page_script_runs_and_records_in_a_browser(tmp_path):
     line = json.loads(result["log"])
     assert line["verdict"] == "needs-work"
     assert line["callouts"] == {"face": "gaze drifted"}
+
+
+# --------------------------------------------------------------------------- #
+# second review round
+# --------------------------------------------------------------------------- #
+
+@pytest.mark.needs_pillow
+def test_hostile_directory_name_cannot_inject_into_the_summary_line(tmp_path):
+    """The summary line carries paths; escaping only the cards is not enough."""
+    hostile = tmp_path / "<img src=x onerror=alert(1)>"
+    hostile.mkdir()
+    src, out = make_pair(hostile)
+    r = run_cli("--pair", src, out, "--static", "--out-dir", hostile / "qa", "--json")
+    assert r.returncode == 0, r.stderr
+    html = Path(json.loads(r.stdout)["page"]).read_text()
+    assert "<img src=x" not in html
+
+
+@pytest.mark.needs_pillow
+def test_manifest_path_inside_the_project_is_not_double_prefixed(tmp_path):
+    """finalize.py records `grandma/source/x.jpg`; prefixing the project again breaks it."""
+    project = tmp_path / "grandma"
+    (project / "source").mkdir(parents=True)
+    (project / "output").mkdir()
+    Image.new("RGB", (40, 30)).save(project / "source" / "t.jpg")
+    Image.new("RGB", (80, 60)).save(project / "output" / "t_upscale.jpg")
+    (project / "manifest.json").write_text(json.dumps({"assets": [{
+        "source": "grandma/source/t.jpg", "output": "grandma/output/t_upscale.jpg",
+        "verification": "pass"}]}))
+    pairs = qa_page.pairs_from_manifest(project)
+    assert len(pairs) == 1
+    assert pairs[0]["source"] == project / "source" / "t.jpg"
+
+
+@pytest.mark.needs_pillow
+def test_same_stem_different_extension_is_not_collapsed(tmp_path):
+    src = tmp_path / "target.jpg"
+    Image.new("RGB", (40, 30)).save(src)
+    for name in ("target_upscale.jpg", "target_upscale.png"):
+        Image.new("RGB", (80, 60)).save(tmp_path / name)
+    r = run_cli("--pair", src, tmp_path / "target_upscale.jpg",
+                "--pair", src, tmp_path / "target_upscale.png",
+                "--static", "--out-dir", tmp_path / "qa", "--json")
+    assert r.returncode == 0, r.stderr
+    html = Path(json.loads(r.stdout)["page"]).read_text()
+    assert 'data-photo="target_upscale.jpg"' in html
+    assert 'data-photo="target_upscale.png"' in html
+
+
+def test_null_timestamp_is_rejected():
+    assert qa_page.validate_record({"photo": "a", "verdict": "approve", "ts": None}) is not None
+
+
+@pytest.mark.needs_pillow
+def test_json_stdout_stays_parseable_in_static_mode(tmp_path):
+    src, out = make_pair(tmp_path)
+    r = run_cli("--pair", src, out, "--static", "--out-dir", tmp_path / "qa", "--json")
+    assert r.returncode == 0
+    json.loads(r.stdout)  # must not raise
+
+
+@pytest.mark.needs_pillow
+def test_clean_works_from_another_directory(tmp_path):
+    src, out = make_pair(tmp_path)
+    project = tmp_path / "proj"
+    project.mkdir()
+    qa_dir = project / "qa"
+    run_cli("--pair", src, out, "--static", "--out-dir", qa_dir, "--json")
+    # clean with a relative out-dir from a different cwd
+    r = subprocess.run([sys.executable, str(SCRIPT), "--clean", "--out-dir", "qa"],
+                       cwd=project, capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
+    assert not list(qa_dir.glob("review-pass*.html")), "the page survived cleanup"

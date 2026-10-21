@@ -62,6 +62,13 @@ def die(message):
     sys.exit(2)
 
 
+HUMAN = sys.stdout  # swapped to stderr when --json owns stdout
+
+
+def say(*args):
+    print(*args, file=HUMAN)
+
+
 # --------------------------------------------------------------------------- #
 # inputs
 # --------------------------------------------------------------------------- #
@@ -96,6 +103,26 @@ def parse_crop(spec):
             "label": label, "id": slug(label), "box": box}
 
 
+def resolve_entry_path(entry, project):
+    """Find a manifest path without guessing twice about its base.
+
+    finalize.py records whatever it was given, so an entry may be absolute, relative
+    to the project, or relative to the project's parent. Trying the candidates in
+    order beats prefixing blindly, which turns `grandma/source/x.jpg` into
+    `grandma/grandma/source/x.jpg`.
+    """
+    path = Path(entry)
+    candidates = [path]
+    if not path.is_absolute():
+        candidates.append(project / path)
+        candidates.append(project.parent / path)
+        candidates.append(project / path.name)
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return None
+
+
 def pairs_from_manifest(project):
     """Pair each source with the outputs the finalizer recorded for it."""
     manifest = project / "manifest.json"
@@ -114,17 +141,14 @@ def pairs_from_manifest(project):
         if asset.get("verification") == "fail":
             # A failed verification is not something to review as a candidate.
             continue
-        # finalize.py records whatever paths it was given, so a relative entry is
-        # relative to the project, not to wherever this review is launched from.
-        src = Path(source) if Path(source).is_absolute() else project / source
-        out = Path(output) if Path(output).is_absolute() else project / output
-        if not src.exists() or not out.exists():
+        src, out = resolve_entry_path(source, project), resolve_entry_path(output, project)
+        if not src or not out:
             continue
         key = (str(src.resolve()), str(out.resolve()))
         if key in seen:
             continue
         seen.add(key)
-        pairs.append({"photo": out.stem, "source_stem": src.stem,
+        pairs.append({"photo": out.name, "source_stem": src.stem,
                       "source": src, "render": out,
                       "note": asset.get("verification", "")})
     if not pairs:
@@ -145,7 +169,7 @@ def resolve_pairs(args):
             die(f"source not found: {src}")
         if not out.exists():
             die(f"render not found: {out}")
-        pairs.append({"photo": out.stem, "source_stem": src.stem,
+        pairs.append({"photo": out.name, "source_stem": src.stem,
                       "source": src, "render": out, "note": ""})
     if pairs:
         return pairs
@@ -165,6 +189,7 @@ def callouts_for(crops, pairs):
     for pair in pairs:
         alias.setdefault(pair["source_stem"], []).append(pair["photo"])
         alias.setdefault(pair["photo"], []).append(pair["photo"])
+        alias.setdefault(Path(pair["photo"]).stem, []).append(pair["photo"])
     by_photo = {}
     for crop in crops:
         if crop["photo"]:
@@ -219,7 +244,10 @@ def readable_image(path, workdir):
         pass
     if path.suffix.lower() not in {".heic", ".heif", ".hif", ".avif"}:
         raise SystemExit(f"cannot read {path}")
-    target = workdir / (path.stem + "_decoded.png")
+    import hashlib
+
+    digest = hashlib.sha1(str(path.resolve()).encode()).hexdigest()[:8]
+    target = workdir / f"{slug(path.stem)}-{digest}.png"
     for tool, argv in (
         ("magick", ["magick", str(path), str(target)]),
         ("sips", ["sips", "-s", "format", "png", str(path), "--out", str(target)]),
@@ -368,9 +396,8 @@ def validate_record(record, line_no=None):
     photo = record.get("photo")
     if not isinstance(photo, str) or not photo.strip():
         return f"{where}photo must be a non-empty string"
-    stamp = record.get("ts")
-    if stamp is not None and not isinstance(stamp, str):
-        return f"{where}ts must be a string"
+    if "ts" in record and not isinstance(record.get("ts"), str):
+        return f"{where}ts must be a string when present"
     if record.get("pass") is not None and not isinstance(record.get("pass"), int):
         return f"{where}pass must be an integer"
     if record.get("verdict") not in VERDICT_CHOICES:
@@ -608,14 +635,38 @@ function downloadLog(){
 }
 
 async function done(){
+  const log = document.getElementById('log');
+  const unsent = log.value.trim().length > 0;
   if (MODE === 'serve'){
-    try { await fetch(`/${TOKEN}/done`, {method:'POST'}); } catch (e) {}
-    document.body.innerHTML = '<p style="padding:40px;font:16px system-ui">Review closed. ' +
-      'Recorded lines are in the log; the terminal has the summary.</p>';
+    let closed = false;
+    try {
+      const response = await fetch(`/${TOKEN}/done`, {method:'POST'});
+      closed = response.ok;
+    } catch (e) { closed = false; }
+    if (closed && !unsent){
+      document.body.innerHTML = '<p style="padding:40px;font:16px system-ui">Review closed. ' +
+        'The terminal has the summary.</p>';
+    } else if (!closed){
+      // The server never heard us. Keep the page and the log: the textarea may be
+      // the only copy of a verdict.
+      log.scrollIntoView({behavior:'smooth'});
+      log.select();
+      document.querySelector('.hint').textContent =
+        'Could not reach the server. The log below is the only copy: copy or download it, ' +
+        'then import it with --import.';
+    } else {
+      log.scrollIntoView({behavior:'smooth'});
+      document.querySelector('.hint').textContent =
+        'Some lines were not sent to the server. Copy or download them, then import.';
+    }
   } else {
-    document.getElementById('log').scrollIntoView({behavior:'smooth'});
+    log.scrollIntoView({behavior:'smooth'});
   }
 }
+
+// Someone reading four photographs carefully may not click for a while. A pulse
+// every minute keeps the server's idle timeout from closing a live review.
+if (MODE === 'serve') setInterval(() => { fetch(`/${TOKEN}/ping`).catch(() => {}); }, 60000);
 
 document.querySelectorAll('[data-action=record]').forEach(b =>
   b.addEventListener('click', () => record(b.closest('.card'))));
@@ -715,7 +766,7 @@ def render_page(title, pairs, mode, token, pass_no, submit_line, hint):
         done_button += '<button class="primary" data-action="done">Finish</button>'
 
     return (PAGE.replace("__TITLE__", escape(title))
-                .replace("__SUBMIT__", submit_line)
+                .replace("__SUBMIT__", escape(submit_line))
                 .replace("__NAV__", " ".join(nav))
                 .replace("__CARDS__", "\n".join(cards))
                 .replace("__DONE__", done_button)
@@ -776,6 +827,8 @@ class ReviewServer:
                     return
                 if path.rstrip("/") == f"/{outer.token}":
                     self._send(200, outer.html.encode(), "text/html; charset=utf-8")
+                elif path == f"/{outer.token}/ping":
+                    self._send(200, b"pong")
                 elif path == f"/{outer.token}/verdicts":
                     body = json.dumps(outer.recorded).encode()
                     self._send(200, body, "application/json")
@@ -861,8 +914,9 @@ def write_files_manifest(out_dir, page_path):
             generated = list(json.loads(listing.read_text()).get("generated", []))
         except ValueError:
             generated = []
-    if str(page_path) not in generated:
-        generated.append(str(page_path))
+    absolute = str(Path(page_path).resolve())
+    if absolute not in generated:
+        generated.append(absolute)
     listing.write_text(json.dumps({"generated": generated, "version": PROG}, indent=2) + "\n")
 
 
@@ -965,6 +1019,9 @@ def main():
     except AttributeError:
         pass
     args = build_parser().parse_args()
+    global HUMAN
+    if args.json:
+        HUMAN = sys.stderr  # stdout belongs to the JSON document
 
     out_dir = args.out_dir or (args.project / "qa" if args.project else Path("qa"))
     records = read_verdicts(verdict_path(out_dir))
@@ -1005,10 +1062,10 @@ def main():
         if args.json:
             print(json.dumps(summary, indent=2))
         else:
-            print(f"page: {page}")
-            print(f"pairs: {len(built)}  callouts: {summary['callouts']}  pass: {pass_no}")
-            print(f"open it, then import what you record: "
-                  f"--import {out_dir / 'verdicts.jsonl'}")
+            say(f"page: {page}")
+            say(f"pairs: {len(built)}  callouts: {summary['callouts']}  pass: {pass_no}")
+            say(f"open it, then import what you record: "
+                f"--import {out_dir / 'verdicts.jsonl'}")
         if args.open and shutil.which("open"):
             subprocess.run(["open", str(page)], check=False)
         return 0
@@ -1022,15 +1079,15 @@ def main():
     write_files_manifest(out_dir, out_dir / f"review-pass{pass_no}.html")
 
     local = f"http://127.0.0.1:{server.port}/{token}/"
-    print(f"review page: {local}")
+    say(f"review page: {local}")
     if args.host == "0.0.0.0":
         address = lan_address()
         if address:
-            print(f"on the network: http://{address}:{server.port}/{token}/")
-        print("for Codex: bind is 0.0.0.0; open that URL in Codex's browser")
-    print(f"pairs: {len(built)}  callouts: {sum(len(p['callouts']) for p in built)}  "
-          f"pass: {pass_no}")
-    print(f"verdicts: {verdict_path(out_dir)}")
+            say(f"on the network: http://{address}:{server.port}/{token}/")
+        say("for Codex: bind is 0.0.0.0; open that URL in Codex's browser")
+    say(f"pairs: {len(built)}  callouts: {sum(len(p['callouts']) for p in built)}  "
+        f"pass: {pass_no}")
+    say(f"verdicts: {verdict_path(out_dir)}")
 
     if args.open:
         webbrowser.open(local)
@@ -1040,9 +1097,9 @@ def main():
     for record in recorded:
         notes = record.get("callouts") or {}
         suffix = f" ({len(notes)} note{'s' if len(notes) != 1 else ''})" if notes else ""
-        print(f"  {record['photo']}: {record['verdict']}{suffix}")
+        say(f"  {record['photo']}: {record['verdict']}{suffix}")
     if not recorded:
-        print("no verdicts recorded")
+        say("no verdicts recorded")
 
     if args.json:
         print(json.dumps({
@@ -1050,8 +1107,8 @@ def main():
             "recorded": recorded, "verdicts": str(verdict_path(out_dir)),
         }, indent=2))
 
-    print(f"\nread them back with: cat {verdict_path(out_dir)}")
-    print(f"clean up with: python {Path(sys.argv[0]).name} --out-dir {out_dir} --clean")
+    say(f"\nread them back with: cat {verdict_path(out_dir)}")
+    say(f"clean up with: python {Path(sys.argv[0]).name} --out-dir {out_dir} --clean")
     return 0 if recorded else 1
 
 

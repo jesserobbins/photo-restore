@@ -1168,10 +1168,11 @@ def main():
                               "verdicts": str(verdict_path(out_dir))}, indent=2))
         return 0 if added else 1
 
-    # The key root is where the verdict log lives, so the same photograph keeps one
-    # identity no matter which directory the command was launched from.
-    key_root = args.project or (args.out_dir.resolve().parent if args.out_dir
-                                else Path.cwd())
+    # The key root is where the verdict log lives, always. Anchoring on the project
+    # instead lets two projects sharing one --out-dir collide, because each keys the
+    # same relative path.
+    key_root = (args.out_dir or (args.project / "qa" if args.project else Path("qa"))
+                ).resolve().parent
     pairs = assign_keys(resolve_pairs(args), key_root)
     callouts = callouts_for([parse_crop(spec) for spec in args.crop], pairs)
     prior = latest_by_photo(records)

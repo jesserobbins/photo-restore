@@ -1055,3 +1055,43 @@ def test_distinct_keys_get_distinct_anchors(tmp_path):
     html = Path(json.loads(r.stdout)["page"]).read_text()
     anchors = re.findall(r'<a href="#(p-[^"]+)"', html)
     assert len(set(anchors)) == 2, anchors
+
+
+@pytest.mark.needs_pillow
+def test_shared_out_dir_keeps_two_projects_apart(tmp_path):
+    """One log, two projects: their keys must not collide."""
+    keys = []
+    for name in ("A", "B"):
+        project = tmp_path / name
+        (project / "output").mkdir(parents=True)
+        Image.new("RGB", (40, 30)).save(project / "src.jpg")
+        Image.new("RGB", (80, 60)).save(project / "output" / "target_upscale.jpg")
+        (project / "manifest.json").write_text(json.dumps({"assets": [{
+            "source": str(project / "src.jpg"),
+            "output": str(project / "output" / "target_upscale.jpg"),
+            "verification": "pass"}]}))
+        r = run_cli("--project", project, "--out-dir", tmp_path / "shared",
+                    "--static", "--json")
+        assert r.returncode == 0, r.stderr
+        html = Path(json.loads(r.stdout)["page"]).read_text()
+        keys.append(set(re.findall(r'data-photo="([^"]+)"', html)))
+    assert keys[0] != keys[1], keys
+
+
+@pytest.mark.needs_pillow
+def test_mixed_relative_and_absolute_entry_resolves(tmp_path):
+    """A relative source beside an absolute output outside the project still resolves."""
+    projects = tmp_path / "elsewhere"
+    (projects / "source").mkdir(parents=True)
+    (projects / "renders").mkdir()
+    Image.new("RGB", (40, 30)).save(projects / "source" / "x.jpg")
+    absolute_out = projects / "renders" / "x_upscale.jpg"
+    Image.new("RGB", (80, 60)).save(absolute_out)
+    project = tmp_path / "proj"
+    project.mkdir()
+    (project / "manifest.json").write_text(json.dumps({"assets": [{
+        "source": "source/x.jpg", "output": str(absolute_out),
+        "verification": "pass"}]}))
+    pairs = qa_page.pairs_from_manifest(project)
+    assert len(pairs) == 1
+    assert pairs[0]["source"] == projects / "source" / "x.jpg"

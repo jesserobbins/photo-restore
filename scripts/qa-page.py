@@ -185,27 +185,27 @@ def resolve_pairs(args):
     die("nothing to review: pass --project DIR or --pair SOURCE RENDER")
 
 
-def assign_keys(pairs):
-    """Give every pair a key that is unique across the whole run.
+def pair_key(pair):
+    """A verdict key derived from the pair alone.
 
-    The output filename is the readable default, but two directories can each hold
-    `render.png`. Colliding keys would collapse two photos into one verdict and one
-    set of prior notes, which is silent data loss in the record the agent reads.
+    It must not depend on which other pairs are in the run: reviewing `a/render.png`
+    today and `b/render.png` tomorrow would otherwise hand the same key to different
+    photographs, so one would inherit the other's verdict and notes.
+
+    A project writes its results to `output/`, so the filename alone is unique and
+    readable there. Anywhere else the directory is part of the key, which keeps
+    `a/render.png` and `b/render.png` apart without depending on what else is in the
+    run.
     """
-    import hashlib
+    render = Path(pair["render"]).resolve()
+    if render.parent.name == "output":
+        return render.name
+    return f"{render.parent.name}/{render.name}"
 
-    seen = {}
+
+def assign_keys(pairs):
     for pair in pairs:
-        render = Path(pair["render"])
-        resolved = str(render.resolve())
-        key = render.name
-        if key in seen and seen[key] != resolved:
-            key = f"{render.parent.name}/{render.name}"
-        if key in seen and seen[key] != resolved:
-            digest = hashlib.sha1(resolved.encode()).hexdigest()[:6]
-            key = f"{render.parent.name}/{render.stem}-{digest}{render.suffix}"
-        seen[key] = resolved
-        pair["photo"] = key
+        pair["photo"] = pair_key(pair)
     return pairs
 
 
@@ -329,7 +329,11 @@ def build_pairs(pairs, callouts, prior, workdir):
         src, out = readable_image(pair["source"], workdir), readable_image(pair["render"], workdir)
         a_disp = displayed_size(src)
         b_disp = displayed_size(out)
-        if abs(a_disp[0] / a_disp[1] - b_disp[0] / b_disp[1]) > 0.005:
+        # Relative difference, not absolute: comparing raw ratios rejects a correct
+        # wide pair while waving through a tall one that differs by more than 0.5%.
+        a_ratio = a_disp[0] / a_disp[1]
+        b_ratio = b_disp[0] / b_disp[1]
+        if abs(a_ratio / b_ratio - 1) > 0.005:
             die(
                 f"{src.name} and {out.name} differ in aspect ratio by more than 0.5%; "
                 "that is a crop, and the slider would compare different frames"
@@ -622,11 +626,6 @@ function payloadFor(card){
   return {photo, verdict: checked ? checked.value : null, callouts: notes};
 }
 
-function logLine(text){
-  const log = document.getElementById('log');
-  log.value = (log.value ? log.value + '\\n' : '') + text;
-}
-
 function showStatus(card, text){
   card.querySelector('.status').textContent = text;
 }
@@ -651,7 +650,9 @@ async function record(card){
       // Acknowledged lines are already on disk; only failures need the log, or the
       // page would later claim its own recorded verdicts were never sent.
       showStatus(card, `recorded ${payload.verdict} (pass ${PASS})`);
-      if (failed.delete(payload.photo)) renderLog();
+      // Only the line that just succeeded is cleared: an older pending request
+      // failing afterwards must not resurrect a stale recovery line either.
+      if (failed.get(payload.photo) === line) { failed.delete(payload.photo); renderLog(); }
     } catch (err) {
       showStatus(card, 'could not record: ' + err.message + ' -- the line is in the log below');
       // One line per photo, so a retry that succeeds supersedes the stale failure.
@@ -1022,6 +1023,7 @@ def import_file(path, out_dir, records):
     # Validate every line before writing any of them: a half-imported file would
     # leave the log in a state nobody asked for.
     staged = []
+    explicit = []
     for number, line in enumerate(path.read_text().splitlines(), 1):
         line = line.strip()
         if not line:
@@ -1034,12 +1036,30 @@ def import_file(path, out_dir, records):
         if problem:
             die(f"{path}: {problem}")
         record["pass"] = pass_no
-        if not record.get("ts"):
-            # Stamp in file order: an unstamped correction must not sort ahead of
-            # the approval it supersedes within the same import.
-            base = datetime.now().astimezone().replace(microsecond=0)
-            record["ts"] = (base + timedelta(microseconds=number)).isoformat()
         staged.append(record)
+        if record.get("ts"):
+            explicit.append((len(staged), record["ts"]))
+    # An unstamped record must sit where the file puts it. Stamping it "now" lets
+    # it outrank an explicit older timestamp that follows it, turning a correction
+    # into the stale verdict.
+    for index, record in enumerate(staged, 1):
+        if record.get("ts"):
+            continue
+        later = next((ts for pos, ts in explicit if pos > index), None)
+        if later:
+            try:
+                record["ts"] = (datetime.fromisoformat(later.replace("Z", "+00:00"))
+                                - timedelta(microseconds=index)).isoformat()
+                continue
+            except ValueError:
+                pass
+        earlier = next((ts for pos, ts in reversed(explicit) if pos < index), None)
+        try:
+            base = (datetime.fromisoformat(earlier.replace("Z", "+00:00"))
+                    if earlier else datetime.now().astimezone())
+            record["ts"] = (base + timedelta(microseconds=index)).isoformat()
+        except ValueError:
+            record["ts"] = datetime.now().astimezone().isoformat()
     for record in staged:
         append_record(verdict_path(out_dir), record)
     added = len(staged)

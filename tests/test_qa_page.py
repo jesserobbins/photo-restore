@@ -194,7 +194,7 @@ def test_manifest_pairing_uses_recorded_source_and_output(tmp_path):
     assert len(pairs) == 1
     # The verdict key is the output stem, which is unique per variant; the source
     # stem stays available for naming callouts.
-    assert pairs[0]["photo"] == "target_upscale.jpg"
+    assert pairs[0]["photo"].endswith("target_upscale.jpg")
     assert pairs[0]["source_stem"] == "target"
 
 
@@ -478,8 +478,9 @@ def test_two_outputs_of_one_source_get_distinct_verdict_keys(tmp_path):
     summary = json.loads(r.stdout)
     assert summary["pairs"] == 2
     html = Path(summary["page"]).read_text()
-    assert 'data-photo="target_upscale.jpg"' in html
-    assert 'data-photo="target_enhance.jpg"' in html
+    keys = set(re.findall(r'data-photo="([^"]+)"', html))
+    assert any(k.endswith("target_upscale.jpg") for k in keys), keys
+    assert any(k.endswith("target_enhance.jpg") for k in keys), keys
     # Distinct radio groups, so one choice cannot satisfy both cards.
     assert html.count('name="v0"') == 3
     assert html.count('name="v1"') == 3
@@ -496,7 +497,7 @@ def test_manifest_relative_paths_resolve_against_the_project(tmp_path):
         "verification": "pass"}]}))
     pairs = qa_page.pairs_from_manifest(project)
     assert len(pairs) == 1
-    assert pairs[0]["photo"] == "t_upscale.jpg"
+    assert pairs[0]["photo"].endswith("t_upscale.jpg")
 
 
 @pytest.mark.parametrize("record,ok", [
@@ -656,8 +657,10 @@ def test_same_stem_different_extension_is_not_collapsed(tmp_path):
                 "--static", "--out-dir", tmp_path / "qa", "--json")
     assert r.returncode == 0, r.stderr
     html = Path(json.loads(r.stdout)["page"]).read_text()
-    assert 'data-photo="target_upscale.jpg"' in html
-    assert 'data-photo="target_upscale.png"' in html
+    keys = set(re.findall(r'data-photo="([^"]+)"', html))
+    assert len(keys) == 2, keys
+    assert any(k.endswith("target_upscale.jpg") for k in keys), keys
+    assert any(k.endswith("target_upscale.png") for k in keys), keys
 
 
 def test_null_timestamp_is_rejected():
@@ -719,15 +722,31 @@ def test_keys_are_unique_across_directories(tmp_path):
     qa_page.assign_keys(pairs)
     keys = [p["photo"] for p in pairs]
     assert len(set(keys)) == 2, keys
-    assert all("render" in k for k in keys), "keys should stay readable"
+    assert set(keys) == {"a/render.png", "b/render.png"}, keys
 
 
-def test_key_stays_readable_when_unique(tmp_path):
-    render = tmp_path / "target_upscale.jpg"
+def test_project_output_keeps_the_bare_filename(tmp_path):
+    """A project's output/ is the normal case, and it should read cleanly."""
+    out_dir = tmp_path / "proj" / "output"
+    out_dir.mkdir(parents=True)
+    render = out_dir / "target_upscale.jpg"
     Image.new("RGB", (40, 30)).save(render)
-    pairs = [{"photo": "x", "render": render, "source_stem": "target"}]
+    pairs = [{"photo": "x", "render": render, "source": tmp_path / "proj" / "source" / "t.jpg"}]
     qa_page.assign_keys(pairs)
     assert pairs[0]["photo"] == "target_upscale.jpg"
+
+
+def test_key_is_derived_from_the_pair_alone(tmp_path):
+    """Membership must not change a key, or a later run inherits an earlier verdict."""
+    for folder in ("a", "b"):
+        (tmp_path / folder).mkdir()
+        Image.new("RGB", (40, 30)).save(tmp_path / folder / "render.png")
+    alone = qa_page.assign_keys([{"render": tmp_path / "b" / "render.png",
+                                  "source": tmp_path / "b" / "src.png"}])
+    together = qa_page.assign_keys([
+        {"render": tmp_path / "a" / "render.png", "source": tmp_path / "a" / "src.png"},
+        {"render": tmp_path / "b" / "render.png", "source": tmp_path / "b" / "src.png"}])
+    assert alone[0]["photo"] == together[1]["photo"] == "b/render.png"
 
 
 def test_import_order_survives_a_missing_timestamp(tmp_path):
@@ -839,6 +858,7 @@ def test_cli_gives_colliding_render_names_distinct_keys(tmp_path):
     html = Path(json.loads(r.stdout)["page"]).read_text()
     keys = set(re.findall(r'data-photo="([^"]+)"', html))
     assert len(keys) == 2, keys
+    assert any(k.startswith("a/") for k in keys) and any(k.startswith("b/") for k in keys), keys
 
 
 @pytest.mark.needs_pillow
@@ -911,3 +931,28 @@ def test_generated_script_is_syntactically_valid(tmp_path):
     js.write_text(script)
     check = subprocess.run(["node", "--check", str(js)], capture_output=True, text=True)
     assert check.returncode == 0, check.stderr
+
+
+@pytest.mark.needs_pillow
+def test_aspect_guard_uses_a_relative_difference(tmp_path):
+    """Comparing raw ratios rejects a correct wide pair and passes a bad tall one."""
+    src = tmp_path / "s.jpg"
+    Image.new("RGB", (1000, 4000)).save(src)       # ratio 0.25
+    out = tmp_path / "o.jpg"
+    Image.new("RGB", (2000, 7900)).save(out)       # ratio 0.253, ~1.3% off
+    r = run_cli("--pair", src, out, "--static", "--out-dir", tmp_path / "qa")
+    assert r.returncode == 2
+    assert "aspect" in r.stderr.lower()
+
+
+def test_import_places_an_unstamped_record_before_an_explicit_earlier_one(tmp_path):
+    """A correction written above a dated approval must not become the stale verdict."""
+    qa_dir = tmp_path / "qa"
+    download = tmp_path / "d.jsonl"
+    download.write_text(
+        json.dumps({"photo": "a", "verdict": "reject"}) + "\n"
+        + json.dumps({"photo": "a", "verdict": "approve",
+                      "ts": "2020-01-01T00:00:00+00:00"}) + "\n")
+    assert run_cli("--import", download, "--out-dir", qa_dir).returncode == 0
+    latest = qa_page.latest_by_photo(qa_page.read_verdicts(qa_dir / "verdicts.jsonl"))
+    assert latest["a"]["verdict"] == "approve", "the dated approval should win"

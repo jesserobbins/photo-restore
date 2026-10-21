@@ -683,3 +683,136 @@ def test_clean_works_from_another_directory(tmp_path):
                        cwd=project, capture_output=True, text=True)
     assert r.returncode == 0, r.stderr
     assert not list(qa_dir.glob("review-pass*.html")), "the page survived cleanup"
+
+
+# --------------------------------------------------------------------------- #
+# third review round
+# --------------------------------------------------------------------------- #
+
+@pytest.mark.needs_pillow
+def test_project_relative_path_wins_over_a_cwd_file(tmp_path, monkeypatch):
+    """A same-named file in the cwd must not stand in for the project's photo."""
+    a = tmp_path / "A"
+    b = tmp_path / "B"
+    for project, colour in ((a, (10, 10, 10)), (b, (200, 200, 200))):
+        (project / "source").mkdir(parents=True)
+        (project / "output").mkdir()
+        Image.new("RGB", (40, 30), colour).save(project / "source" / "t.jpg")
+        Image.new("RGB", (80, 60), colour).save(project / "output" / "t_upscale.jpg")
+        (project / "manifest.json").write_text(json.dumps({"assets": [{
+            "source": "source/t.jpg", "output": "output/t_upscale.jpg",
+            "verification": "pass"}]}))
+    monkeypatch.chdir(a)  # cwd contains the same relative paths
+    pairs = qa_page.pairs_from_manifest(b)
+    assert pairs[0]["source"] == (b / "source" / "t.jpg").resolve()
+
+
+def test_keys_are_unique_across_directories(tmp_path):
+    pairs = []
+    for folder in ("a", "b"):
+        (tmp_path / folder).mkdir()
+        render = tmp_path / folder / "render.png"
+        Image.new("RGB", (40, 30)).save(render)
+        pairs.append({"photo": "render.png", "render": render,
+                      "source_stem": "src"})
+    qa_page.assign_keys(pairs)
+    keys = [p["photo"] for p in pairs]
+    assert len(set(keys)) == 2, keys
+    assert all("render" in k for k in keys), "keys should stay readable"
+
+
+def test_key_stays_readable_when_unique(tmp_path):
+    render = tmp_path / "target_upscale.jpg"
+    Image.new("RGB", (40, 30)).save(render)
+    pairs = [{"photo": "x", "render": render, "source_stem": "target"}]
+    qa_page.assign_keys(pairs)
+    assert pairs[0]["photo"] == "target_upscale.jpg"
+
+
+def test_import_order_survives_a_missing_timestamp(tmp_path):
+    qa_dir = tmp_path / "qa"
+    download = tmp_path / "d.jsonl"
+    download.write_text(
+        json.dumps({"photo": "a", "verdict": "approve",
+                    "ts": "2026-01-01T00:00:00"}) + "\n"
+        + json.dumps({"photo": "a", "verdict": "reject"}) + "\n")
+    assert run_cli("--import", download, "--out-dir", qa_dir).returncode == 0
+    latest = qa_page.latest_by_photo(qa_page.read_verdicts(qa_dir / "verdicts.jsonl"))
+    assert latest["a"]["verdict"] == "reject", "the later correction lost"
+
+
+def test_json_is_parseable_for_import_and_clean(tmp_path):
+    qa_dir = tmp_path / "qa"
+    download = tmp_path / "d.jsonl"
+    download.write_text(json.dumps({"photo": "a", "verdict": "approve"}) + "\n")
+    r = run_cli("--import", download, "--out-dir", qa_dir, "--json")
+    assert json.loads(r.stdout)["imported"] == 1
+    r = run_cli("--clean", "--out-dir", qa_dir, "--json")
+    json.loads(r.stdout)
+
+
+@pytest.mark.needs_pillow
+def test_serve_writes_the_page_it_lists(tmp_path):
+    """The generated-file list must reference a file that exists."""
+    src, out = make_pair(tmp_path)
+    qa_dir = tmp_path / "qa"
+    port = free_port()
+    proc = subprocess.Popen(
+        [sys.executable, str(SCRIPT), "--pair", str(src), str(out),
+         "--port", str(port), "--out-dir", str(qa_dir), "--idle-timeout", "20"],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    try:
+        token = None
+        deadline = time.time() + 20
+        while time.time() < deadline:
+            line = proc.stdout.readline()
+            if "review page:" in line:
+                token = line.strip().rstrip("/").split("/")[-1]
+                break
+        assert token
+        urllib.request.urlopen(
+            urllib.request.Request(
+                f"http://127.0.0.1:{port}/{token}/done", data=b"{}", method="POST"),
+            timeout=5).read()
+        proc.wait(timeout=20)
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+    listing = json.loads((qa_dir / ".qa-page-files").read_text())
+    for path in listing["generated"]:
+        assert Path(path).exists(), f"listed a file that does not exist: {path}"
+
+
+@pytest.mark.needs_pillow
+def test_serve_json_stdout_is_clean(tmp_path):
+    src, out = make_pair(tmp_path)
+    port = free_port()
+    proc = subprocess.Popen(
+        [sys.executable, str(SCRIPT), "--pair", str(src), str(out), "--json",
+         "--port", str(port), "--out-dir", str(tmp_path / "qa"),
+         "--idle-timeout", "20"],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    try:
+        # The URL goes to stderr under --json, so stdout stays a document.
+        token = None
+        deadline = time.time() + 20
+        while time.time() < deadline and token is None:
+            err = proc.stderr.readline()
+            if "review page:" in err:
+                token = err.strip().rstrip("/").split("/")[-1]
+        assert token
+        urllib.request.urlopen(
+            urllib.request.Request(
+                f"http://127.0.0.1:{port}/{token}/verdicts",
+                data=json.dumps({"photo": out.name, "verdict": "approve"}).encode(),
+                headers={"Content-Type": "application/json"}, method="POST"),
+            timeout=5).read()
+        urllib.request.urlopen(
+            urllib.request.Request(
+                f"http://127.0.0.1:{port}/{token}/done", data=b"{}", method="POST"),
+            timeout=5).read()
+        stdout, _ = proc.communicate(timeout=20)
+        json.loads(stdout)  # must not raise
+    finally:
+        if proc.poll() is None:
+            proc.kill()

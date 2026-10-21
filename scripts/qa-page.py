@@ -36,7 +36,7 @@ import tempfile
 import threading
 import time
 import webbrowser
-from datetime import datetime
+from datetime import datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
@@ -112,15 +112,20 @@ def resolve_entry_path(entry, project):
     `grandma/grandma/source/x.jpg`.
     """
     path = Path(entry)
-    candidates = [path]
-    if not path.is_absolute():
-        candidates.append(project / path)
-        candidates.append(project.parent / path)
-        candidates.append(project / path.name)
-    for candidate in candidates:
+    if path.is_absolute():
+        return path if path.exists() else None
+    project = project.resolve()
+    # The project first: a cwd-relative file that happens to share a name must not
+    # win, or reviewing project B can show project A's photographs.
+    for candidate in (project / path, project.parent / path):
         if candidate.exists():
             return candidate
-    return None
+    cwd_candidate = path.resolve()
+    try:
+        cwd_candidate.relative_to(project)
+    except ValueError:
+        return None          # outside the project: not ours to trust
+    return cwd_candidate if cwd_candidate.exists() else None
 
 
 def pairs_from_manifest(project):
@@ -176,6 +181,30 @@ def resolve_pairs(args):
     if args.project:
         return pairs_from_manifest(args.project)
     die("nothing to review: pass --project DIR or --pair SOURCE RENDER")
+
+
+def assign_keys(pairs):
+    """Give every pair a key that is unique across the whole run.
+
+    The output filename is the readable default, but two directories can each hold
+    `render.png`. Colliding keys would collapse two photos into one verdict and one
+    set of prior notes, which is silent data loss in the record the agent reads.
+    """
+    import hashlib
+
+    seen = {}
+    for pair in pairs:
+        render = Path(pair["render"])
+        resolved = str(render.resolve())
+        key = render.name
+        if key in seen and seen[key] != resolved:
+            key = f"{render.parent.name}/{render.name}"
+        if key in seen and seen[key] != resolved:
+            digest = hashlib.sha1(resolved.encode()).hexdigest()[:6]
+            key = f"{render.parent.name}/{render.stem}-{digest}{render.suffix}"
+        seen[key] = resolved
+        pair["photo"] = key
+    return pairs
 
 
 def callouts_for(crops, pairs):
@@ -535,6 +564,8 @@ footer{max-width:1500px;margin:0 auto;padding:18px 0 60px;border-top:1px solid v
 const MODE = "__MODE__";
 const TOKEN = "__TOKEN__";
 const PASS = __PASS__;
+let unsent = 0;        // lines the server never accepted
+let inFlight = 0;      // record requests still open
 
 function setSlider(root, ratio){
   ratio = Math.min(1, Math.max(0, ratio));
@@ -595,19 +626,25 @@ async function record(card){
   const line = JSON.stringify(record);
 
   if (MODE === 'serve'){
+    inFlight++;
     try {
       const response = await fetch(`/${TOKEN}/verdicts`, {method:'POST',
         headers:{'Content-Type':'application/json'}, body: line});
       if (!response.ok) throw new Error(await response.text());
+      // Acknowledged lines are already on disk; only failures need the log, or the
+      // page would later claim its own recorded verdicts were never sent.
       showStatus(card, `recorded ${payload.verdict} (pass ${PASS})`);
-      logLine(line);
     } catch (err) {
       showStatus(card, 'could not record: ' + err.message + ' -- the line is in the log below');
       logLine(line);
+      unsent++;
+    } finally {
+      inFlight--;
     }
   } else {
     showStatus(card, `copied ${payload.verdict} to the log below; save it when done`);
     logLine(line);
+    unsent++;
   }
 }
 
@@ -636,14 +673,23 @@ function downloadLog(){
 
 async function done(){
   const log = document.getElementById('log');
-  const unsent = log.value.trim().length > 0;
+  const hint = document.querySelector('.hint');
+  // A verdict posted a moment before Done must not be lost to a closing server.
+  const deadline = Date.now() + 5000;
+  while (inFlight > 0 && Date.now() < deadline){
+    await new Promise(resolve => setTimeout(resolve, 100));
+  }
+  if (inFlight > 0){
+    hint.textContent = 'a verdict is still being sent; press Done again in a moment';
+    return;
+  }
   if (MODE === 'serve'){
     let closed = false;
     try {
       const response = await fetch(`/${TOKEN}/done`, {method:'POST'});
       closed = response.ok;
     } catch (e) { closed = false; }
-    if (closed && !unsent){
+    if (closed && unsent === 0){
       document.body.innerHTML = '<p style="padding:40px;font:16px system-ui">Review closed. ' +
         'The terminal has the summary.</p>';
     } else if (!closed){
@@ -651,12 +697,12 @@ async function done(){
       // the only copy of a verdict.
       log.scrollIntoView({behavior:'smooth'});
       log.select();
-      document.querySelector('.hint').textContent =
+      hint.textContent =
         'Could not reach the server. The log below is the only copy: copy or download it, ' +
         'then import it with --import.';
     } else {
       log.scrollIntoView({behavior:'smooth'});
-      document.querySelector('.hint').textContent =
+      hint.textContent =
         'Some lines were not sent to the server. Copy or download them, then import.';
     }
   } else {
@@ -940,11 +986,12 @@ def clean(out_dir, include_verdicts):
             target.unlink()
             removed.append(str(target))
     elif verdict_path(out_dir).exists():
-        print(f"kept {verdict_path(out_dir)} (pass --verdicts to remove it too)")
+        say(f"kept {verdict_path(out_dir)} (pass --verdicts to remove it too)")
     if not removed:
-        print("nothing to remove")
+        say("nothing to remove")
     for path in removed:
-        print(f"removed {path}")
+        say(f"removed {path}")
+    return removed
 
 
 def import_file(path, out_dir, records):
@@ -967,11 +1014,16 @@ def import_file(path, out_dir, records):
         if problem:
             die(f"{path}: {problem}")
         record["pass"] = pass_no
+        if not record.get("ts"):
+            # Stamp in file order: an unstamped correction must not sort ahead of
+            # the approval it supersedes within the same import.
+            base = datetime.now().astimezone().replace(microsecond=0)
+            record["ts"] = (base + timedelta(microseconds=number)).isoformat()
         staged.append(record)
     for record in staged:
         append_record(verdict_path(out_dir), record)
     added = len(staged)
-    print(f"imported {added} verdict{'s' if added != 1 else ''} into {verdict_path(out_dir)}")
+    say(f"imported {added} verdict{'s' if added != 1 else ''} into {verdict_path(out_dir)}")
     return added
 
 
@@ -1027,11 +1079,16 @@ def main():
     records = read_verdicts(verdict_path(out_dir))
 
     if args.clean:
-        clean(out_dir, args.verdicts)
+        removed = clean(out_dir, args.verdicts)
+        if args.json:
+            print(json.dumps({"mode": "clean", "removed": removed}, indent=2))
         return 0
 
     if args.import_from:
         added = import_file(args.import_from, out_dir, records)
+        if args.json:
+            print(json.dumps({"mode": "import", "imported": added,
+                              "verdicts": str(verdict_path(out_dir))}, indent=2))
         return 0 if added else 1
 
     pairs = resolve_pairs(args)
@@ -1073,10 +1130,15 @@ def main():
     submit_line = f"Recording to {verdict_path(out_dir)} as pass {pass_no}."
     hint = "Record each photo, then press Done to hand control back."
     html = render_page(title, built, "serve", token, pass_no, submit_line, hint)
+    # Write the page as well as serving it: it is then a record of what was
+    # reviewed, and the generated-file list points at something that exists.
+    page = out_dir / f"review-pass{pass_no}.html"
+    page.write_text(html)
+    write_files_manifest(out_dir, page)
+
     server = ReviewServer(html, token, out_dir, pass_no, args.host,
                           args.port, args.idle_timeout)
     server.build()  # bind once, so the URL printed below is the one that serves
-    write_files_manifest(out_dir, out_dir / f"review-pass{pass_no}.html")
 
     local = f"http://127.0.0.1:{server.port}/{token}/"
     say(f"review page: {local}")

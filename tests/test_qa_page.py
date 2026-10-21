@@ -966,7 +966,8 @@ def test_import_places_an_unstamped_record_before_an_explicit_earlier_one(tmp_pa
                       "ts": "2020-01-01T00:00:00+00:00"}) + "\n")
     assert run_cli("--import", download, "--out-dir", qa_dir).returncode == 0
     latest = qa_page.latest_by_photo(qa_page.read_verdicts(qa_dir / "verdicts.jsonl"))
-    assert latest["a"]["verdict"] == "approve", "the dated approval should win"
+    # The approval is the file's last line, and file order decides inside a pass.
+    assert latest["a"]["verdict"] == "approve", "the last line should win"
 
 
 # --------------------------------------------------------------------------- #
@@ -987,8 +988,8 @@ def test_unstamped_block_keeps_file_order(tmp_path):
     records = qa_page.read_verdicts(qa_dir / "verdicts.jsonl")
     a_records = [r for r in records if r["photo"] == "a"]
     assert len(a_records) == 2
-    # The later line in the file is the later verdict.
-    assert a_records[0]["ts"] < a_records[1]["ts"], a_records
+    # The file's order is authoritative, so the last line is the last verdict.
+    assert a_records[0]["seq"] < a_records[1]["seq"], a_records
     assert qa_page.latest_by_photo(records)["a"]["verdict"] == "needs-work"
 
 
@@ -1032,3 +1033,25 @@ def test_key_does_not_depend_on_the_working_directory(tmp_path):
         html = Path(json.loads(r.stdout)["page"]).read_text()
         outs.append(set(re.findall(r'data-photo="([^"]+)"', html)))
     assert outs[0] == outs[1], f"key changed with cwd: {outs}"
+
+
+def test_unparseable_timestamp_is_rejected():
+    assert qa_page.validate_record(
+        {"photo": "a", "verdict": "approve", "ts": "yesterday"}) is not None
+
+
+@pytest.mark.needs_pillow
+def test_distinct_keys_get_distinct_anchors(tmp_path):
+    """Two keys that slug alike must still link to their own card."""
+    src = tmp_path / "s.jpg"
+    Image.new("RGB", (40, 30)).save(src)
+    pairs = []
+    for name in ("a_b.jpg", "a-b.jpg"):
+        render = tmp_path / name
+        Image.new("RGB", (80, 60)).save(render)
+        pairs += ["--pair", str(src), str(render)]
+    r = run_cli(*pairs, "--static", "--out-dir", tmp_path / "qa", "--json")
+    assert r.returncode == 0, r.stderr
+    html = Path(json.loads(r.stdout)["page"]).read_text()
+    anchors = re.findall(r'<a href="#(p-[^"]+)"', html)
+    assert len(set(anchors)) == 2, anchors

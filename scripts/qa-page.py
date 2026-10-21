@@ -124,9 +124,11 @@ def resolve_asset(source, output, project):
     # mix a relative source with an absolute output, and the absolute one's own
     # ancestors are the only place that source can plausibly sit.
     bases = []
-    for anchor in (project, project.parent, *project.parents,
+    # Whichever path is absolute knows where it lives; its ancestry is better
+    # evidence than the project, which can contain a same-named decoy.
+    for anchor in (*(out.parents if out.is_absolute() else ()),
                    *(src.parents if src.is_absolute() else ()),
-                   *(out.parents if out.is_absolute() else ())):
+                   project, project.parent, *project.parents):
         if anchor not in bases:
             bases.append(anchor)
     for base in bases:
@@ -209,12 +211,16 @@ def pair_key(pair, root):
     # The project, then its parent, then nothing: falling back to the working
     # directory would give the same file two keys depending on where the command ran,
     # and the verdict log would disagree with itself.
-    for base in (root_path, root_path.parent):
-        try:
-            return str(render.relative_to(base))
-        except ValueError:
-            continue
-    return str(render)
+    try:
+        return str(render.relative_to(root_path))
+    except ValueError:
+        pass
+    try:
+        # Prefix the root's own name: without it, `root/output/r.jpg` and
+        # `root/../output/r.jpg` both read `output/r.jpg` and share a verdict.
+        return f"{root_path.name}/{render.relative_to(root_path.parent)}"
+    except ValueError:
+        return str(render)
 
 
 def assign_keys(pairs, root):
@@ -349,7 +355,7 @@ def build_pairs(pairs, callouts, prior, workdir):
     from PIL import Image
 
     built = []
-    for pair in pairs:
+    for index, pair in enumerate(pairs, 1):
         src, out = readable_image(pair["source"], workdir), readable_image(pair["render"], workdir)
         a_disp = displayed_size(src)
         b_disp = displayed_size(out)
@@ -393,7 +399,7 @@ def build_pairs(pairs, callouts, prior, workdir):
 
         built.append({
             "photo": pair["photo"],
-            "anchor": slug(pair["photo"]) or "photo",
+            "anchor": f"{slug(pair['photo']) or 'photo'}-{index}",
             "source_name": src.name,
             "render_name": out.name,
             "verification": pair.get("note", ""),
@@ -448,7 +454,11 @@ def order_key(record):
                     else parsed.replace(tzinfo=timezone.utc).timestamp())
         except ValueError:
             when = 0.0
-    return (record.get("pass") or 0, when)
+    # Within a pass, an imported file's own order is authoritative: `seq` is the
+    # position in that file, so the last line is the last word. Records recorded
+    # live carry no seq and fall back to their timestamp.
+    seq = record.get("seq")
+    return (record.get("pass") or 0, seq if isinstance(seq, int) else 0, when)
 
 
 def latest_by_photo(records):
@@ -468,8 +478,14 @@ def validate_record(record, line_no=None):
     photo = record.get("photo")
     if not isinstance(photo, str) or not photo.strip():
         return f"{where}photo must be a non-empty string"
-    if "ts" in record and not isinstance(record.get("ts"), str):
-        return f"{where}ts must be a string when present"
+    if "ts" in record:
+        stamp = record.get("ts")
+        if not isinstance(stamp, str):
+            return f"{where}ts must be a string when present"
+        try:
+            datetime.fromisoformat(stamp.replace("Z", "+00:00"))
+        except ValueError:
+            return f"{where}ts must be an ISO-8601 timestamp"
     if record.get("pass") is not None and not isinstance(record.get("pass"), int):
         return f"{where}pass must be an integer"
     if record.get("verdict") not in VERDICT_CHOICES:
@@ -1070,36 +1086,17 @@ def import_file(path, out_dir, records):
             die(f"{path}: {problem}")
         record["pass"] = pass_no
         staged.append(record)
-    # An unstamped record must sit where the file puts it. Walking backwards with a
-    # running bound gives every unstamped record in a block a strictly smaller stamp
-    # than the one after it, so file order survives whatever the neighbours carry.
-    bound = None
-    for record in reversed(staged):
-        if record.get("ts"):
-            try:
-                bound = datetime.fromisoformat(record["ts"].replace("Z", "+00:00"))
-            except ValueError:
-                bound = None
-            continue
-        if bound is None:
-            # No later record to anchor to. Place this block after the last explicit
-            # stamp in the file, or at now when the file has none, so a trailing
-            # correction never sorts before the record it corrects.
-            base = datetime.now().astimezone().replace(microsecond=0)
-            explicit = [r["ts"] for r in staged if r.get("ts")]
-            for candidate in explicit:
-                try:
-                    parsed = datetime.fromisoformat(candidate.replace("Z", "+00:00"))
-                except ValueError:
-                    continue
-                if parsed.tzinfo is None:
-                    parsed = parsed.replace(tzinfo=timezone.utc)
-                base = max(base, parsed.astimezone() + timedelta(microseconds=1))
-            record["ts"] = base.isoformat()
-            bound = base
-            continue
-        bound = bound - timedelta(microseconds=1)
-        record["ts"] = bound.isoformat()
+    # File order is recorded directly as `seq` rather than reconstructed from
+    # timestamps. Synthesized stamps kept colliding with real ones at the same
+    # instant, and the tie-break decided which correction won.
+    fallback = datetime.now().astimezone().replace(microsecond=0).isoformat()
+    last_seen = fallback
+    for index, record in enumerate(staged, 1):
+        record["seq"] = index
+        if not record.get("ts"):
+            record["ts"] = last_seen
+        else:
+            last_seen = record["ts"]
     for record in staged:
         append_record(verdict_path(out_dir), record)
     added = len(staged)

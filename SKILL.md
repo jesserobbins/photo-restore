@@ -27,30 +27,30 @@ metadata:
 ## Preferred image models
 
 The pixel work is done by an image model, and not all of them behave the same
-way on a restoration. The two that have held up in practice are the **image
-models available through Gemini** and **through Codex**. Prefer those when a
+way on a restoration. The two that have held up in practice are the image
+models available through Gemini and through Codex. Prefer those when a
 choice exists.
 
 What that means operationally:
 
-- Use the model's **image editing** path, passing the source as the image to
+- Use the model's image editing path, passing the source as the image to
   edit, not a text-to-image prompt that describes it. A generated lookalike is
   not a restoration, however good it looks.
-- Ask for the **lowest edit strength** the tool exposes. These models will
+- Ask for the lowest edit strength the tool exposes. These models will
   happily rerender a face at full strength and hand back a plausible stranger.
 - Re-check grain and flat-region texture every time. A super-resolution pass is
   where film grain gets averaged into blotches, and a model that returns smooth
   skin has silently decided the photo was digital.
 - Match the prompt to the model. The templates in
   [references/prompt-templates.md](references/prompt-templates.md) are written to
-  work across them; trim to what a given model actually honours rather than
+  work across them. Trim to what a given model actually honours rather than
   assuming every clause is respected.
 - A model refusing or producing a changed subject is a normal outcome. Reduce
   processing, mask the affected area, or fall back to a deterministic resample.
   Do not retry until it gives you something prettier.
 
 When neither is available, any editing-capable model is acceptable under the
-same constraints, with the same verification. The models are the executor; the
+same constraints, with the same verification. The models are the executor. The
 fidelity rules and the checks are what make the result a restoration.
 
 ## Objective and priority
@@ -59,7 +59,7 @@ Improve the *technical quality* of a supplied photo without changing what it
 depicts. Treat fidelity to the source as the highest priority. It is preferable
 to leave uncertain details soft or imperfect than to invent plausible ones.
 
-**Order of priorities:**
+Order of priorities:
 1. Preserve the subjects, their identity, appearance, expression, posture,
    proportions, and relationships.
 2. Preserve scene geometry, composition, clothing, objects, and period details.
@@ -71,8 +71,8 @@ Never sacrifice a higher priority for a lower one.
 
 ## When to use
 
-Use when the user asks to **upscale**, **enhance**, **clean up**, **restore**,
-**sharpen**, **denoise**, **deblur**, or **improve resolution** of an existing
+Use when the user asks to upscale, enhance, clean up, restore,
+sharpen, denoise, deblur, or improve resolution of an existing
 photograph, especially portraits, family photos, group photos, archival
 photos, and scans. When reference photos of the same subject are supplied,
 use them cautiously as *identity constraints*, not as replacement content.
@@ -84,19 +84,19 @@ edit without representing it as faithful restoration).
 
 ## Non-negotiable invariants
 
-Preserve, unless the user **explicitly** directs a change:
+Preserve, unless the user explicitly directs a change:
 
-- **Face and identity:** bone structure, jawline, nose, eyes/eyelids, eye
+- Face and identity: bone structure, jawline, nose, eyes/eyelids, eye
   spacing, ears, mouth, teeth, hairline, wrinkles, asymmetry, age,
   ethnicity-indicative appearance, and distinctive marks.
-- **Expression and gaze:** smile intensity, lip shape and openness, teeth
+- Expression and gaze: smile intensity, lip shape and openness, teeth
   visibility, eyelid shape, eye direction, emotional expression.
-- **Body:** silhouette, physique, body/limb proportions, hands/fingers,
+- Body: silhouette, physique, body/limb proportions, hands/fingers,
   posture, head tilt, shoulder angle, and relative scale.
-- **Surroundings:** subject count, positions, background people and objects,
+- Surroundings: subject count, positions, background people and objects,
   clothing and insignia, jewelry, text/signage, lighting direction, shadows,
   depth of field, camera perspective, framing, and aspect ratio.
-- **Photo character:** authentic skin texture, film grain where appropriate,
+- Photo character: authentic skin texture, film grain where appropriate,
   original color intent (including monochrome/sepia), and historically
   plausible materials. Do not default to smooth modern phone-photo rendering.
 
@@ -110,25 +110,25 @@ If the user does not specify otherwise, use:
 
 | Setting | Default |
 | --- | --- |
-| Fidelity mode | **Conservative / strict** |
-| Scale | **2× in each dimension** (4× pixel count), if technically feasible |
-| Aspect ratio / crop | **Identical to source**, no reframing |
-| Denoise | Mild; retain real texture |
-| Sharpness | Gentle; avoid halos and fake microtexture |
+| Fidelity mode | Conservative / strict |
+| Scale | 2× in each dimension (4× pixel count), if technically feasible |
+| Aspect ratio / crop | Identical to source, no reframing |
+| Denoise | Mild. Retain real texture |
+| Sharpness | Gentle. Avoid halos and fake microtexture |
 | Contrast / exposure | Small, reversible corrections |
-| Color | Neutral and source-faithful; no automatic colorization |
+| Color | Neutral and source-faithful. No automatic colorization |
 | Face treatment | Same fidelity rules as the rest of the photo |
-| Generative reconstruction | **Off**, unless truly needed and disclosed |
+| Generative reconstruction | Off, unless truly needed and disclosed |
 | Reference face use | Identity consistency only |
-| Output format | **Same container as the source** (JPEG→JPEG q95, PNG→PNG, TIFF→TIFF, HEIC→JPEG) |
-| Output filename | `<source-stem>_upscale.<ext>`; `_enhance` for the higher-detail variant |
-| Overwrite | **Never**; collisions append `-2`, `-3` |
-| Metadata | **Copy from source, correct what changed, append provenance** |
-| Capture date | **Never modified**, not even to record the processing time |
-| Film grain | **Preserve or recover from source evidence**; synthesize only when asked, and say so |
+| Output format | Same container as the source (JPEG→JPEG q95, PNG→PNG, TIFF→TIFF, HEIC→JPEG) |
+| Output filename | `<source-stem>_upscale.<ext>`, and `_enhance` for the higher-detail variant |
+| Overwrite | Never. Collisions append `-2`, `-3` |
+| Metadata | Copy from source, correct what changed, append provenance |
+| Capture date | Never modified, not even to record the processing time |
+| Film grain | Preserve or recover from source evidence. Synthesize only when asked, and say so |
 | Original | Retained, unwritten, unmodified |
 
-**Conservative** is not an adjective for a prompt; it is the acceptance
+Conservative is not an adjective for a prompt. It is the acceptance
 criterion. If a more dramatic image looks better but changes a subject,
 reject it and use the gentler result.
 
@@ -141,33 +141,33 @@ image. See [references/metadata-and-naming.md](references/metadata-and-naming.md
 Some facts change the pipeline, and only the owner has them. Ask in one message,
 skip what the file already answers, and do not turn this into an interrogation.
 
-**Always worth asking:**
+Always worth asking:
 
 1. What is this photo, and is the fidelity question about the person, the print,
    or the moment? (It changes how hard to push.)
 2. Do you want the faithful result, the higher-detail result, or both?
 
-**When the source is film or plausibly film:**
+When the source is film or plausibly film:
 
 3. What era, and do you know the stock or ISO?
 4. Film or digital capture? If digital, no grain is added unless asked.
 5. Scan of a print, scan of the negative, or a photo of a photo?
-6. What should happen to the grain: preserve, recover, reconstruct, or clean up?
+6. What must happen to the grain: preserve, recover, reconstruct, or clean up?
 7. Was it retouched? Studio portraits were spotted and softened, and those
    areas legitimately have no grain.
 
 When the source arrived by drag-and-drop rather than as a path, establish whether
-it is the original first — see [references/macos-photos.md](references/macos-photos.md).
+it is the original first. See [references/macos-photos.md](references/macos-photos.md).
 
 ## Project directories
 
 For a job with face or body references, or more than one photo, keep the work in
-a project directory. `scripts/new-project.py` scaffolds it; a human can also
+a project directory. `scripts/new-project.py` scaffolds it. A human can also
 make one by hand.
 
 ```
 <project>/
-  source/      the photo(s) to restore — read-only, never written to
+  source/      the photo(s) to restore. The skill never writes here.
   refs/face/   identity constraints: bone structure, hairline, marks
   refs/body/   silhouette and proportion constraints
   output/      suffixed results, metadata intact
@@ -194,8 +194,8 @@ A project is optional. For one photo with no references, pass plain paths to
 ### 1. Inspect and anchor the source
 
 - Treat the original image as authoritative evidence. Do not overwrite it.
-- If the photo arrived by drag-and-drop rather than as a path, it is a **visual
-  reference of unknown provenance**, not the original — a chat client may have
+- If the photo arrived by drag-and-drop rather than as a path, it is a visual
+  reference of unknown provenance, not the original. A chat client can have
   re-encoded it at reduced size with metadata stripped. On macOS, preflight it
   and recover the real file from Photos.app by UUID. See
   [references/macos-photos.md](references/macos-photos.md).
@@ -205,7 +205,7 @@ A project is optional. For one photo with no references, pass plain paths to
   place, caption, and keywords are what the owner will expect back.
 - Identify all faces, expressions, body outlines, hands, distinctive objects,
   text, patterns, and small features at risk of "helpful" invention.
-- Preserve subject count and exact framing. Handle EXIF orientation correctly;
+- Preserve subject count and exact framing. Handle EXIF orientation correctly. 
   most upscalers return pixels already upright, so the output orientation tag
   must be normalized rather than inherited.
 - If the subject is very small or badly damaged, be explicit that some features
@@ -215,16 +215,16 @@ A project is optional. For one photo with no references, pass plain paths to
 
 Prefer this progression, stopping as soon as quality is sufficient:
 
-1. **Photometric corrections:** slight white balance, exposure, highlights,
+1. Photometric corrections: slight white balance, exposure, highlights,
    shadows, tonal and color restoration as appropriate.
-2. **Non-generative cleanup:** mild dust/scratch repair, compression cleanup,
-   careful denoise without destroying texture; mask localized damage. Denoise
-   **before** any upscaling, never after.
-3. **Deterministic / low-hallucination resize:** high-quality resampling
-   (e.g. Lanczos) or a demonstrably conservative super-resolution model.
-4. **Light finishing:** modest sharpening and fine-grain management
+2. Non-generative cleanup: mild dust/scratch repair, compression cleanup,
+   careful denoise without destroying texture. Mask localized damage. Denoise
+   before any upscaling, never after.
+3. Deterministic / low-hallucination resize: high-quality resampling
+   (for example Lanczos) or a demonstrably conservative super-resolution model.
+4. Light finishing: modest sharpening and fine-grain management
    suitable for the output dimensions. Never sharpen grain.
-5. **Conditional face-aware reconstruction:** only if steps 1–4 cannot
+5. Conditional face-aware reconstruction: only if steps 1–4 cannot
    reasonably address the defect, with *strong* identity/geometry control
    and no confident fabrication of absent information.
 
@@ -234,20 +234,20 @@ acceptable default choices.
 
 ### 2a. Decide the grain question before upscaling
 
-Grain is the one texture the skill may add, and only under disclosure. Establish
+Grain is the one texture the skill can add, and only under disclosure. Establish
 which of these applies, using the source's own flat regions as evidence:
 
 | Source grain | Action | Recorded as |
 | --- | --- | --- |
-| Visible and intact | Preserve; denoise gently before the upscale | `preserved` |
+| Visible and intact | Preserve. Denoise gently before the upscale | `preserved` |
 | Attenuated but present in flat areas | Recover by sampling the source's flat areas | `recovered` |
-| Absent everywhere | Only if the owner asked; match the stock's character | `reconstructed` |
+| Absent everywhere | Only if the owner asked. Match the stock's character | `reconstructed` |
 | Digital capture | Leave alone | `none` |
 
-Synthesizing grain into a grainless file is invention — of texture rather than of
+Synthesizing grain into a grainless file is invention. It invents texture rather than
 faces. It is acceptable only when requested, matched to what the stock actually
 did, and disclosed in the delivery and the provenance sentence. Prefer recovering
-what is merely attenuated; that is the evidence side of the line.
+what is merely attenuated. That is the evidence side of the line.
 
 Remember that a faithful 2× upscale leaves grain twice as large in pixels. That
 is correct. Flat, textureless areas in the output are a grain failure, not a
@@ -259,17 +259,17 @@ cleanup success. Full procedure, stock character, and failure modes:
 If one or more clear images of a depicted person are supplied:
 
 - Determine which face in the source corresponds to each reference.
-- Use references to check **stable identity traits** (face shape, feature
+- Use references to check stable identity traits (face shape, feature
   proportions, hairline, distinctive marks), never to transplant the
   reference's smile, gaze, age, lighting, makeup, or viewpoint.
-- Preserve the **source photo's** expression, age, head angle, occlusion,
+- Preserve the source photo's expression, age, head angle, occlusion,
   and lighting. Do not paste, morph, or replace the face.
 - If references disagree because of age, hairstyle, expression, or camera
   angle, prefer the target image for those properties.
-- If identity cannot be established confidently, don't force a match.
+- If identity cannot be established confidently, do not force a match.
 
 When available, an identity-preserving model or source-guided restoration
-may assist; never assume the model's "identity similarity" score certifies
+can assist. Never assume the model's "identity similarity" score certifies
 the result. Visual checking of defining features remains mandatory.
 
 ### 4. Make a first conservative pass
@@ -279,7 +279,7 @@ image(s), and use the exact constraints in
 [references/prompt-templates.md](references/prompt-templates.md).
 Distinguish TARGET (photo to restore) from REFERENCES (identity aids).
 
-**One source photo -> one faithful output.** Preserve all depicted content.
+One source photo -> one faithful output. Preserve all depicted content.
 If the available editing tool tends to rerender content, minimize strength
 or fall back to deterministic enhancement. Do not label a regenerated
 interpretation as a faithful upscale.
@@ -298,14 +298,14 @@ Follow [references/qa-checklist.md](references/qa-checklist.md). At minimum:
 - Look for waxy skin, synthetic pores, ringing/halos, artifacts,
   painted-over grain, oversharpening, speculative textures or alterations.
 - Check grain in a flat region at 100%: sky, wall, out-of-focus background. It
-  should survive at `source × scale` clump size. Flat and textureless means the
-  grain was destroyed; uniform texture everywhere means synthetic texture was
-  substituted; crunchy noise at edges means over-sharpening, not grain.
-- If the output fails **any** high-priority invariant, **reduce processing,
-  mask the affected area, or use the conservative baseline**.
+  must survive at `source × scale` clump size. Flat and textureless means the
+  grain was destroyed. Uniform texture everywhere means synthetic texture was
+  substituted. Crunchy noise at edges means over-sharpening, not grain.
+- If the output fails any high-priority invariant, reduce processing,
+  mask the affected area, or use the conservative baseline.
 - Without a human, run `python scripts/compare.py original.jpg enhanced.png
   --out comparison.png --crop 100,80,300,320` for an aligned single-sheet
-  comparison. Coordinates are in **original-image pixels**; crop is optional.
+  comparison. Coordinates are in original-image pixels. Crop is optional.
 
 No aggregate image-similarity metric can substitute for these checks, and a
 similarity number must never stand in for a verdict.
@@ -331,12 +331,12 @@ What it guarantees, and what to do if it does not:
 | Reported | Meaning | Action |
 | --- | --- | --- |
 | `pass` | All metadata carried and dimensions consistent. | Deliver. |
-| `degraded` | Something known could not be carried: no exiftool (so only the raw EXIF blob and ICC went across, and provenance was not written), or an ICC profile that no longer describes the output pixels. Exit 0, shortfall named. | Say exactly which fields the shortfall names. Do not claim preservation. |
-| `fail` | A core tag is missing, a dimension tag disagrees, or a caption was replaced. | **Do not deliver and do not import into Photos.** Fix and rerun. |
+| `degraded` | Something known can not be carried: no exiftool (so only the raw EXIF blob and ICC went across, and provenance was not written), or an ICC profile that no longer describes the output pixels. Exit 0, shortfall named. | Say exactly which fields the shortfall names. Do not claim preservation. |
+| `fail` | A core tag is missing, a dimension tag disagrees, or a caption was replaced. | Do not deliver and do not import into Photos. Fix and rerun. |
 
 The output keeps the source's capture date, camera, GPS, rating, keywords and
-caption, and gains a provenance line recording **when** and **where** the
-upscale happened. The capture date is never moved — the processing time goes in
+caption, and gains a provenance line recording when and where the
+upscale happened. The capture date is never moved. The processing time goes in
 `XMP-xmpMM:History` and `UserComment` precisely so that a 1962 photograph does
 not get refiled as a 2026 one.
 
@@ -347,7 +347,7 @@ they were not run here.
 
 ### 6a. Put the judgement in front of the human
 
-Metadata and geometry can be checked mechanically; whether the gaze drifted cannot.
+Metadata and geometry can be checked mechanically. Whether the gaze drifted cannot.
 Once the file is finalized, build the review page so the owner records a verdict
 instead of being told what to look at:
 
@@ -381,19 +381,19 @@ record of their judgement.
 ### 7. Deliver transparently
 
 - Return the restored image where the available tools support it.
-- Say the scale applied and summarize **actual** operations performed.
+- Say the scale applied and summarize actual operations performed.
 - Report the metadata result: `pass`, or the specific `degraded` shortfall.
 - State the grain decision: `preserved`, `recovered`, `reconstructed`, or `none`.
   A reconstruction is disclosed, never presented as preservation.
 - Say which file was restored when a photo had edits: the edited render or the
   unedited master are different claims about the same filename.
 - Clearly distinguish a non-generative upscale from a generated/restored
-  interpretation; do not promise exact recovery of lost detail.
+  interpretation. Do not promise exact recovery of lost detail.
 - If significant areas are ambiguous, disclose them briefly.
 - Preserve the original and avoid silent crop/colorization/content changes.
 - For low-quality source material, optionally provide two labeled variants:
-  **Faithful** (`_upscale`) and **Enhanced** (`_enhance`, more detail but subject
-  to the same identity/expression constraints). Default to **Faithful** alone.
+  Faithful (`_upscale`) and Enhanced (`_enhance`, more detail but subject
+  to the same identity/expression constraints). Default to Faithful alone.
 - On macOS, the result can be imported back into Photos as a new asset with its
   capture date intact. See [references/macos-photos.md](references/macos-photos.md),
   and never run `osxphotos push-exif`, which writes to the originals.
@@ -407,17 +407,17 @@ record of their judgement.
 | Reference has a wider smile than the source | Keep source smile |
 | Denoise removes real wrinkles or fabric weave | Reduce denoise |
 | "Upscale" adds pores/teeth/hair strands not evidenced by source | Reduce or remove generative processing |
-| Damage prevents confident recovery | Leave restrained ambiguity; disclose |
+| Damage prevents confident recovery | Leave restrained ambiguity. Disclose |
 | Uncertain writing or insignia | Do not invent readable text |
 | Only face changes while rest stays faithful | Reject or mask off face |
 | Output has clean pixels but lost the capture date | Treat as a failure, not a success |
 | The delivered file looks like a chat-app re-encode | Get the original before restoring |
-| A caption would be replaced by the provenance note | Append instead; never replace |
-| Flat areas came back smooth and textureless | Report lost grain; preserve or recover, don't shrug |
+| A caption would be replaced by the provenance note | Append instead. Never replace |
+| Flat areas came back smooth and textureless | Report lost grain. Preserve or recover, do not shrug |
 | Grain was synthesized without being asked | Remove it, or disclose it as reconstruction |
 | Grain synthesized and not disclosed | Treat as a fidelity failure |
 | Sharpening turned grain into crunchy noise | Reduce sharpening, not grain |
-| Studio-retouched skin has grain added back | Stop; those areas have none by design |
+| Studio-retouched skin has grain added back | Stop. Those areas have none by design |
 
 ## Default prompt
 
@@ -427,7 +427,7 @@ record of their judgement.
 > clothing. Preserve subject count, composition, cropping, background,
 > objects, perspective, and lighting. Reduce noise and artifacts gently,
 > correct tone/color only where justified, and sharpen without creating
-> synthetic detail. Preserve the source's film grain and its natural texture;
+> synthetic detail. Preserve the source's film grain and its natural texture. 
 > do not smooth it away and do not invent new texture. This is a high-fidelity
 > restoration, NOT a reimagining,
 > face beautification, or face replacement. If a detail is genuinely absent,

@@ -1,55 +1,55 @@
 # photo-restore
 
-Fidelity-first photo restoration for AI agents.
+An Agent Skill is a set of instructions that an AI agent reads and follows.
+photo-restore is an Agent Skill for restoring photographs with an image model.
 
-**photo-restore** upscales, restores, and cleans up photographs without inventing
-people, and without losing the record that makes a photograph findable in twenty
-years. It is an Agent Skill: a set of instructions plus small verification scripts
-that any capable AI agent can follow.
-
-Works with Claude Code, Cursor, Codex, pi, Windsurf, and any other host that reads
-Agent Skills.
+Restoration here means two things. The person in the photograph does not change.
+The information that the camera recorded does not get lost.
 
 ## Motivation
 
-The state of the art in AI enabled photo restoration continues to evolve rapidly
-while the goals and objectives remain the same. This skill provides simple and
-repeatable photo restoration instructions for your AI platform.
+> The state of the art in AI enabled photo restoration continues to evolve rapidly
+> while the goals and objectives remain the same. This skill provides simple and
+> repeatable photo restoration instructions for your AI platform.
 
 ## Install
 
-```bash
-npx skills add jesserobbins/photo-restore
-```
+You need an agent that reads Agent Skills. Claude Code, Cursor, Codex, pi and
+Windsurf all read them.
 
-Installs into the skill directory your agent reads. To install one skill from a
-collection:
+1. Run the install command. It copies the skill into the skill folder of your agent.
 
-```bash
-npx skills add <owner>/<repo> --skill photo-restore
-```
+   ```bash
+   npx skills add jesserobbins/photo-restore
+   ```
 
-Manual install: copy this directory into your agent's skills folder, keeping the
-folder name identical to the `name` in `SKILL.md`.
+2. If the repository holds more than one skill, name the skill to install.
 
-```bash
-cp -r photo-restore ~/.claude/skills/
-```
+   ```bash
+   npx skills add <owner>/<repo> --skill photo-restore
+   ```
 
-For a ChatGPT Project, which has no skill directory, paste `SKILL.md` into the
-project instructions and upload the reference files as project material.
+3. If you cannot use the command, copy the folder by hand. The folder name must
+   equal the `name` field in `SKILL.md`.
+
+   ```bash
+   cp -r photo-restore ~/.claude/skills/
+   ```
+
+A ChatGPT Project has no skill folder. Paste `SKILL.md` into the project
+instructions and add the reference files as project material.
 
 ## Requirements
 
-| Tool | Needed for | Without it |
+| Tool | What it does | If it is missing |
 | --- | --- | --- |
-| Python 3.9+ with Pillow | the helper scripts | you get the workflow as prose only |
-| `exiftool` | metadata carry, correction, and verification | the run reports `degraded` and names what was lost |
-| ImageMagick or `sips` | reading HEIC/HEIF, which Pillow cannot decode | HEIC input is refused rather than half-processed |
-| `osxphotos` | Apple Photos: recovering the original by UUID, importing the result back | plain file-path workflow |
+| Python 3.9 or later, with Pillow | runs the helper scripts | you get the workflow as text only |
+| `exiftool` | copies and checks the metadata | the run reports `degraded` and names the loss |
+| ImageMagick or `sips` | opens HEIC and HEIF files | the run refuses HEIC input |
+| `osxphotos` | reads and writes the Apple Photos library | you use file paths instead |
 
-Nothing is required to use the skill as instructions. The scripts are the part
-that makes the metadata guarantee checkable.
+You do not need any of these tools to read the skill as instructions. The scripts
+make the metadata guarantee checkable.
 
 ```bash
 brew install exiftool imagemagick
@@ -57,109 +57,121 @@ python3 -m pip install Pillow
 brew install osxphotos   # macOS only
 ```
 
-## What it does
+## What the skill does
 
-- **Refuses to invent people.** Identity, expression, gaze, pose, body
-  proportions, clothing, and background are treated as invariants. A softer
-  result that still looks like the person beats a sharp one that does not.
-- **Carries the archive forward.** Capture date, camera, GPS, rating, keywords, and
-  caption are copied from the source, corrected only where the upscale made them
-  false, and verified against the real pixels. Colour profile follows the pixels:
-  the render's own profile is kept, and the source's is dropped rather than pasted
-  onto pixels it no longer describes.
-- **Records provenance.** One sentence saying when and where the upscale
-  happened, written into `Software`, `CreatorTool`, `UserComment`,
-  `XMP-xmpMM:History`, and appended to the caption and keywords. The capture date
-  never moves.
-- **Names outputs predictably.** `<source-stem>_upscale.<ext>`, with `_enhance`
-  for a higher-detail variant. Never overwrites.
-- **Puts the judgement where a human can make it.** A review page with a slider per
-  photo, callout crops of the eye, hands, and collar, one verdict per photo, and an
-  append-only verdict log the agent reads back.
-- **Keeps film grain honest.** Grain is a decision with a disclosure, and the era
-  is a diagnostic for spotting destroyed grain rather than a licence to invent
-  it.
-- **Round-trips through Apple Photos** without touching the library's originals.
+- It keeps the person in the photograph unchanged. Identity, expression, gaze,
+  pose, body proportions, clothing and background are constraints. A soft result
+  that still looks like the person wins over a sharp result that does not.
+- It keeps the record that the camera wrote. Capture date, camera, GPS, rating,
+  keywords, caption and color profile go into the output file.
+- It writes down what it did. One sentence names the time and the tool that did
+  the upscale. The sentence goes into the file, and the capture date does not move.
+- It names the output file after the source file, and it never overwrites.
+- It builds a review page for a human. The page has a slider, callout crops, and
+  one verdict per photo.
+- It treats film grain as a decision. The year tells you if grain was lost, and
+  the year is not a reason to invent grain.
+- It moves a result into Apple Photos as a new item, and it does not change the
+  items that are already there.
 
 ## Quickstart
 
-```bash
-# 1. optional: scaffold a project with role-separated references
-python scripts/new-project.py grandma --source target.jpg --face face.jpg
+The three commands below restore one photograph.
 
-# 2. restore with your image model, writing the raw render somewhere temporary
+1. Make a project folder. The folder holds the source, the reference photos and
+   the output.
 
-# 3. finalize: name it, carry the metadata, verify
-python scripts/finalize.py grandma/source/target.jpg render.png \
-  --project grandma --out-dir grandma/output
-```
+   ```bash
+   python scripts/new-project.py grandma --source target.jpg --face face.jpg
+   ```
 
-Output: `grandma/output/target_upscale.jpg`, with the capture date, camera, GPS,
-caption and keywords intact, a provenance line added, and a machine-written
-`pass` or `degraded` in `grandma/manifest.json`.
+2. Restore the photograph with your image model. Write the result to a temporary
+   file.
 
-If you only want the instructions and no scripts, read
-[`SKILL.md`](SKILL.md). It is written to be followed by hand.
+3. Finalize the result. This step names the file, carries the metadata and checks
+   the result.
 
-## The metadata rule
+   ```bash
+   python scripts/finalize.py grandma/source/target.jpg render.png \
+     --project grandma --out-dir grandma/output
+   ```
 
-Photographs are archival objects. A restore that returns clean pixels and no
+The output is `grandma/output/target_upscale.jpg`. The capture date, the camera,
+the GPS fix, the caption and the keywords are in the output. The file also has a
+provenance sentence. `grandma/manifest.json` records `pass` or `degraded` for that
+photo.
+
+If you want only the instructions and no scripts, read `SKILL.md`. You can follow
+it by hand.
+
+## How the metadata works
+
+A photograph is an archive item. A restore that returns clean pixels and no
 capture date improved the image and destroyed the archive.
 
-The output carries **the render's pixels and the source's record, never the
-render's claims**. In practice: the staged file is stripped of everything, then
-the source's metadata is written onto it. That way an editing tool's own camera,
-location, caption, or processing date cannot survive into a delivered file, and
-there is no per-tag exception list to maintain.
+The output file holds the pixels from the render and the record from the source.
+It holds nothing that the render claims. In practice the script strips the staged
+file and then writes the source metadata onto it. An editing tool can put its own
+camera, location, caption or processing date in its output. None of it survives.
 
-Full detail, including the exiftool behaviours that fail silently:
-[`references/metadata-and-naming.md`](references/metadata-and-naming.md).
+`references/metadata-and-naming.md` has the full list of tags and the exiftool
+behaviors that fail without a warning.
 
 ## Film grain
 
-Grain belongs to the negative; a print shows it enlarged. That makes grain size
-predictable from stock, ISO, and enlargement, so the year is evidence about
-whether grain was *destroyed* by a denoise pass. It is not a recipe for adding
-grain back.
+Grain is in the negative. A print shows the same grain, made larger by the print.
+You can therefore predict the grain size from the film stock, the ISO and the
+print size.
 
-Synthesizing grain into a grainless file is permitted only when asked for,
-matched to what the stock actually did, and disclosed. `--grain reconstructed`
-writes that disclosure into the file, so a reconstruction cannot ship as
-preservation.
+That prediction tells you if a denoise step removed the grain. It does not tell you
+to add grain. The script adds grain only when you ask for it, only in the pattern
+of that stock, and it writes a note in the file that says so.
 
-Ask-before-restoring questions, stock character, and the scale check:
-[`references/film-grain.md`](references/film-grain.md).
+`references/film-grain.md` has the questions to ask and the check to make.
 
-## macOS and Apple Photos
+## Apple Photos on macOS
 
-A file dragged out of Photos.app may be a re-encoded render with its metadata
-stripped. The skill preflights it, recovers the real original by UUID, and
-imports the result back as a new asset filed at its capture date:
+A file that you drag out of Photos can be a smaller copy with no metadata. The
+skill checks that file first. If the check fails, the skill takes the original
+from Photos by its UUID.
 
 ```bash
-osxphotos uuid                    # with the photo selected in Photos.app
+osxphotos uuid                    # select the photo in Photos first
 osxphotos export ./source --uuid <UUID> --sidecar xmp
 ```
 
-`osxphotos push-exif` is named as forbidden, because it writes metadata into the
-library's original files. Details:
-[`references/macos-photos.md`](references/macos-photos.md).
+The skill then imports the result as a new item, with the capture date. Do not run
+`osxphotos push-exif`. That command writes into the original files in the library.
+`references/macos-photos.md` has the detail.
 
 ## Project layout
 
 ```
 <project>/
-  source/      the photo to restore — read-only, never written to
-  refs/face/   identity constraints: bone structure, hairline, marks
-  refs/body/   silhouette and proportion constraints
-  output/      suffixed results, metadata intact
-  qa/          comparison sheets
+  source/      the photo to restore. The skill never writes here.
+  refs/face/   reference photos of the face
+  refs/body/   reference photos of the body
+  output/      the finished files, with metadata
+  qa/          review pages and verdicts.jsonl
   manifest.json
 ```
 
-Face and body references are separated because their roles are not
-interchangeable. Face references constrain *who*; body references constrain
-*shape*; neither constrains expression, gaze, apparent age, or clothing.
+The face and body folders are separate because the two kinds of reference do
+different work. A face reference limits who the person is. A body reference limits
+the shape. Neither one limits expression, age or clothing.
+
+## Review page
+
+After finalize, the skill can build a page for a human reviewer.
+
+```bash
+python scripts/qa-page.py --project grandma \
+  --crop "Face:60,40,300,300" --crop "Hands:150,250,420,390"
+```
+
+The page has a slider for each photo and a crop of each detail. The reviewer
+records a verdict for each photo and can write a note on each crop. The reviews go
+to `qa/verdicts.jsonl`, and the file keeps the older passes.
 
 ## Tests
 
@@ -167,92 +179,48 @@ interchangeable. Face references constrain *who*; body references constrain
 python3 -m pytest tests/ -q
 ```
 
-122 tests covering the invariants rather than the prose: the original is
-byte-identical after a run, an undated source does not inherit the render's
-processing date, a keyword containing a comma survives, a reconstructed grain
-cannot be delivered undisclosed, and a bad invocation exits 2 without writing.
+The tests check the rules, not the text. They confirm that the source file does not
+change, that an undated source does not get the date of the render, and that a
+keyword with a comma survives.
 
-## Files
+## Common questions
 
-| Path | |
-| --- | --- |
-| `SKILL.md` | the skill: fidelity rules, workflow, decision tables |
-| `references/qa-page.md` | review page: modes, callouts, verdict log |
-| `references/prompt-templates.md` | prompts per case, plus grain clauses |
-| `references/qa-checklist.md` | acceptance criteria, visual and metadata |
-| `references/metadata-and-naming.md` | tag table, provenance, format matrix, exiftool gotchas |
-| `references/film-grain.md` | grain questions, stock character, scale check |
-| `references/macos-photos.md` | Photos.app round trip |
-| `scripts/finalize.py` | encode, copy metadata, correct, verify, manifest |
-| `scripts/new-project.py` | scaffold a project |
-| `scripts/qa-page.py` | review page: slider, callout crops, verdicts |
-| `scripts/compare.py` | single-sheet QA comparison |
-| [`references/qa-page.md`](references/qa-page.md) | the review page per environment |
-| [`docs/cli.md`](docs/cli.md) | full flag reference |
-| [`docs/design-notes.md`](docs/design-notes.md) | why the rules are what they are |
-| [`llms.txt`](llms.txt) | machine-readable summary for assistants and direct answer engines |
+Can I keep the original file? Yes. The script reads the source file and writes a
+new file with the suffix `_upscale`. It checks the source file before and after, and
+the two files must match.
+
+Does the output keep the EXIF data? Yes. The capture date, the camera, the GPS fix,
+the rating, the keywords and the caption go into the output, and the script reads
+the output back to confirm it. The capture date stays the same in every case.
+
+Which image model does the skill use? Use the image models in Gemini or in Codex. Give
+the model the source image and ask it to edit that image. A model that redraws the
+photo from a description makes a new photograph, and a new photograph is not a
+restore.
+
+What happens without exiftool? The workflow runs, but the script can carry only the
+raw EXIF block and the color profile. The run then reports `degraded` and names each
+field that it cannot carry.
 
 ## Limits
 
-- The skill does not bundle an upscaler, face model, or weights. It orchestrates
-  the image model you have. The preferred backends are the image models reachable
-  through Gemini and Codex, used through their image-*editing* path with the
-  source passed in.
-- Detail that is not in the original cannot be recovered. The skill's job is to
-  avoid pretending otherwise.
-- Any Pillow re-encode of a 16-bit RGB TIFF yields 8-bit RGB, so a rotated 16-bit
-  RGB TIFF can lose depth without a warning. Convert such a file with a tool that
-  preserves depth.
-- On a host with no `exiftool`, only the raw EXIF blob and ICC profile can be
-  carried. The run says `degraded` and names the fields it could not keep.
+- The skill does not include an upscaler or a face model. It uses the image model
+  that you already have.
+- The skill cannot recover detail that is not in the original. Its job is to avoid
+  the appearance of recovery.
+- A Pillow encode of a 16-bit RGB TIFF writes 8 bits. A rotated 16-bit RGB TIFF can
+  therefore lose depth without a warning.
+- Without `exiftool`, the script carries only the raw EXIF block and the color
+  profile.
 
-## Questions
+## About this project
 
-**What does this skill actually do?**
-It turns a photo restoration into a repeatable procedure: what must not change
-(identity, expression, pose, composition), which corrections are acceptable and in
-what order, and how to verify the result actually matches the source. It also
-handles the part most restorations skip: carrying the photograph's metadata and
-recording what was done.
+Jesse Robbins writes about AI agents, infrastructure, and software that people
+keep. The website is [jesserobbins.com](https://jesserobbins.com), and the GitHub
+profile is [@jesserobbins](https://github.com/jesserobbins).
 
-**Does it replace my original photo?**
-No. The source is treated as read-only evidence and verified byte-identical after
-a run. Output is written alongside it as `<name>_upscale.<ext>`.
+The canonical copy of this skill is
+[github.com/jesserobbins/photo-restore](https://github.com/jesserobbins/photo-restore).
+You can fork it. If you publish a fork, keep the name and the provenance.
 
-**Does it preserve EXIF metadata?**
-Yes, and it verifies that it did. Capture date, camera, lens, GPS, rating,
-keywords, caption, and ICC profile are carried, corrected only where the upscale
-made them false, and checked against the real pixels. The capture date never
-moves.
-
-**What image model should I use?**
-The ones reachable through Gemini and Codex have held up best. Use the model's
-image-*editing* path with the source passed in, not a text-to-image prompt that
-describes it. The fidelity rules and checks are what make the result a
-restoration; the model executes them.
-
-**Does it work without exiftool?**
-The workflow runs, but only the raw EXIF blob and ICC profile can be carried. The
-run reports `degraded` and names what was lost rather than claiming success.
-
-**Is it free?**
-MIT licensed. Install it, fork it, change it.
-
-**Where does it come from?**
-Built and maintained by [Jesse Robbins](https://jesserobbins.com).
-
-## Author
-
-**Jesse Robbins** writes about AI agents, infrastructure, and the work of making
-software trustworthy enough to keep.
-
-- Website: [jesserobbins.com](https://jesserobbins.com)
-- GitHub: [@jesserobbins](https://github.com/jesserobbins)
-- Canonical source: [github.com/jesserobbins/photo-restore](https://github.com/jesserobbins/photo-restore)
-
-If you use this skill, the canonical version lives in that repository. Forks are
-welcome; the name and provenance should follow the work.
-
-## License
-
-MIT. See [LICENSE](LICENSE).
+The license is MIT. See [LICENSE](LICENSE).

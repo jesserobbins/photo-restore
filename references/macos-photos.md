@@ -9,8 +9,8 @@ the result back into the library intact.
 
 ## The problem with a dragged file
 
-A file that arrives by drag-and-drop is a **copy of unknown provenance**. A chat
-client or browser upload may hand over a re-encoded render with metadata
+A file that arrives by drag-and-drop is a copy of unknown provenance. A chat
+client or browser upload can hand over a re-encoded render with metadata
 stripped or rewritten, at reduced dimensions. It is fine as a visual reference
 and it is not evidence about the original.
 
@@ -54,7 +54,7 @@ osxphotos export ./source --uuid <UUID> --sidecar xmp --export-aae
 
 Notes:
 
-- Do **not** pass `--skip-edited`. For a photo the owner has already adjusted,
+- Do not pass `--skip-edited`. For a photo the owner has already adjusted,
   the edited render is the version they have seen and approved, and it is the
   one to restore. For archival work on the unedited original instead, export the
   master file as well and pass it to `new-project.py --master`, which copies it
@@ -79,9 +79,9 @@ the UUID. That human step is normal, not a failure.
 
 ## Returning the result: import, intact
 
-This is the main reason `osxphotos` is in this skill. The restored file should
-become a proper library asset — filed at its **original capture date**, in a
-named album, carrying its keywords — rather than an orphan dated today.
+This is the main reason `osxphotos` is in this skill. The restored file must
+become a proper library asset. It is filed at its original capture date, in a
+named album, and it carries its keywords. It does not appear as an item dated today.
 
 Because `finalize.py` has already written correct `DateTimeOriginal` and the
 capture tags, this lands in the right place chronologically:
@@ -97,7 +97,7 @@ osxphotos import ./output/IMG_1234_upscale.jpg \
 - `--skip-dups` prevents a second copy on a re-run.
 - `--sidecar` can pull keywords, title, and description from an XMP sidecar
   instead of flags.
-- Import adds an asset. The original is not replaced, and the skill should say
+- Import adds an asset. The original is not replaced, and the skill must say
   that plainly so nobody wonders which file is which. The restored file is
   identifiable by its suffix and its provenance sentence.
 
@@ -123,7 +123,7 @@ osxphotos query --uuid <new-uuid> --print "{original_filename} {date} {keyword}"
 
 Check that the capture date matches the source and that the keywords arrived. If
 the asset files under today's date instead of its capture date, the metadata did
-not survive and the import should be redone after fixing it.
+not survive and the import must be redone after fixing it.
 
 ## When osxphotos is not installed
 
@@ -135,14 +135,14 @@ Without it:
 
 1. Ask for a file path, or for the photo to be dragged into a folder on disk.
 2. Restore from that file.
-3. Finalize as usual; metadata handling is unchanged.
+3. Finalize as usual. Metadata handling is unchanged.
 4. Tell the user to import the result by dragging it into Photos.app. Warn that
-   Photos may file it under today's date, since drag-import does not always read
+   Photos can file it under today's date, since drag-import does not always read
    EXIF capture time.
 
 ## Checklist
 
-- [ ] Preflighted the delivered file; it is the original, not a render
+- [ ] Preflighted the delivered file. It is the original, not a render
 - [ ] `source/` holds the edited render for an adjusted photo (or the master copied in with `--master` used deliberately)
 - [ ] `finalize.py` reported `pass`
 - [ ] Imported into a named album with `--skip-dups`

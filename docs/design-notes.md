@@ -1,131 +1,156 @@
 # Design notes
 
-Why the skill is shaped the way it is. Useful if you intend to change it, and
-honest about where the sharp edges are.
+This page gives the reason for each rule. Read it before you change the skill. It
+also names the limits that the skill does not remove.
 
-## The premise
+## The starting idea
 
-A photograph is an archival object, not a bag of pixels. Two things follow.
+A photograph is an archive item. It is not only a group of pixels. Two results
+follow from that.
 
-**Fidelity is the product.** The interesting failure of AI photo restoration is
-not softness, it is a plausible stranger. So the skill states what must not change
-— identity, expression, gaze, pose, proportions, clothing, background — and
-prefers a softer result that still looks like the person. Improvement is allowed
-only where it does not cost fidelity, and the priority order is explicit so a
-trade can be resolved without argument.
+The fidelity of the photo is the product. The common failure of an AI restore is
+not softness. The common failure is a face that looks like a different person. The
+skill therefore names what must not change: identity, expression, gaze, pose,
+proportions, clothing and background. A soft result that still looks like the person
+wins over a sharp result that does not. The priority list is explicit, so a trade
+has a known answer.
 
-**The record matters as much as the image.** A restore that returns sharp pixels
-with no capture date, camera, place, or caption improved the photograph and
-destroyed the archive. The file is what gets kept in ten years, so the metadata is
-part of the deliverable, not a nicety.
+The record matters as much as the image. A restore that returns sharp pixels and no
+capture date, camera, place or caption improved the photo and destroyed the archive.
+The file is what someone keeps in ten years, so the metadata is part of the
+deliverable.
 
-## The blank-slate rule
+## The empty-file rule
 
-The output carries the render's pixels and the source's record. Never the render's
-claims.
+The output file holds the pixels from the render and the record from the source. It
+holds nothing that the render claims.
 
-A render is whatever tool produced it, and those tools stamp things: their own
-camera, their own location, a processing timestamp, a comment, a caption. None of
-that is evidence about the photograph. If it reaches the delivered file it is
-indistinguishable from the source's own metadata, and it will be believed.
+A render is the output of a tool, and such a tool puts its own values in the file:
+its camera, its location, a processing time, a comment, a caption. None of those
+values is evidence about the photograph. When one of them reaches the output file, no
+reader can tell it from the metadata of the source, and the reader trusts it.
 
-So the metadata pass works on a blank slate: the staged file is stripped with
-`exiftool -all=`, then the source's tags are written onto it.
+The script therefore works on an empty file. It strips the staged file with
+`exiftool -all=` and then writes the tags from the source onto it.
 
-This replaced an earlier design that copied everything and then un-copied what the
-render had invented. That version needed an entry for every tag a tool might stamp
-— dates, camera, GPS, caption, comment, thumbnail, dimensions, orientation — and
-each addition created the next gap. One of them cleared a date the source genuinely
-had, because the check was a single flag derived from a different tag. Stripping
-once is bounded; enumerating is not.
+An earlier design copied all the tags and then removed the tags that the render had
+invented. That design needed one entry for each tag that a tool can write: dates,
+camera, GPS, caption, comment, thumbnail, dimensions and orientation. Each new entry
+opened the next gap. One entry removed a date that the source really had, because
+the check used one flag from a different tag. One strip is a known quantity. A list
+of exceptions is not.
 
-If you change this area, keep the strip. Anything that reintroduces "copy then
-remove" will grow the same class of bug.
+If you change this part, keep the strip. A design that copies first and removes
+later will grow the same faults.
 
-## Provenance, and why the capture date never moves
+## The provenance sentence and the capture date
 
-One sentence records when and where the upscale happened:
+One sentence records the time and the tool of the upscale:
 
 > Upscaled 2.0x (4000x3000 to 8000x6000) by photo-restore 2.0, conservative mode,
 > on 2026-10-19. Source: IMG_1234.jpg. Capture date unchanged.
 
-It is written to `Software`, `CreatorTool`, `UserComment`, `XMP-xmpMM:History`,
-and appended to the caption and keywords. Different readers look in different
-places, so one location is not enough.
+The script writes the sentence to five places. The places are `Software`,
+`CreatorTool`, `UserComment`, `XMP-xmpMM:History`, and the caption and keywords.
+Different readers look in different places, so one place is not enough.
 
-The processing time goes in the history event and the comment, never in
-`DateTimeOriginal` or `CreateDate`. Writing it there would refile a 1962
-photograph as a 2026 one, which is the opposite of what an archive wants.
+The processing time goes into the history entry and the comment. It never goes into
+`DateTimeOriginal` or `CreateDate`. A processing time in a date field moves a 1962
+photograph to 2026 in a library sort, and an archive does not want that.
 
-Append, never replace. Captions and comments are the owner's words, and a
-restoration tool that eats someone's caption is indistinguishable from data loss.
+The script adds to the existing values. It does not replace them. A caption and a
+comment belong to the owner, and a restore tool that removes a caption is no
+different from a tool that loses data.
 
-## Grain
+## Film grain
 
-Grain belongs to the negative: silver halide crystals, dye clouds in C-41. A print
-shows that same grain enlarged by the print's magnification, plus paper surface
-texture at a different frequency.
+Grain is in the negative. The grains of silver halide become clouds of dye in a C41
+process. A print shows the same grain, made larger by the magnification of the
+print. The print also adds the texture of the paper, at another frequency.
 
-That makes grain size predictable from stock, ISO, and enlargement, which makes
-the era a **diagnostic**. A uniformly smooth scan of a 1997 400-speed negative is
-evidence of a denoise pass, because film that fast was not that clean. The year
-tells you grain was destroyed; it is not a recipe for adding grain back.
+The grain size therefore follows from the film stock, the ISO and the print size.
+The year of the photo is a test. A 1997 negative at ISO 400 has visible grain. A
+scan of that photo with no grain went through a denoise step. The year tells you
+that the grain is missing. The year does not tell you to add grain.
 
-Synthesis is still available, because an owner may want it, but it is gated: only
-when asked, matched to what the stock actually did, and disclosed in the file. The
-distinction between recovering attenuated grain from the source's own flat regions
-and synthesizing grain from a profile is the whole line between restoring and
-decorating.
+The script can still add grain, because an owner can want it. Three conditions
+apply. The owner must ask for it. The grain must match the pattern of that stock.
+The file must say that the grain is new. The line between a restore and a decoration
+is the difference between rebuilding weak grain from the flat areas of the source
+and making grain from a profile.
 
-One consequence that gets missed: a faithful 2x upscale leaves grain twice as large
-in pixels. That is correct. Flat, textureless output is a grain failure, not a
-cleanup success.
+A faithful 2x upscale makes the grain two times larger in pixels. That result is
+correct. A flat area with no texture means the grain was lost. It does not mean the
+noise reduction worked.
 
 ## Apple Photos
 
-`osxphotos` is here to bring the result *into* the library intact — filed at its
-capture date, in a named album, carrying its keywords — rather than appearing as an
-orphan dated today.
+The `osxphotos` tool brings the result into the library as a new item. The item has
+the capture date, it goes into a named album, and it keeps its keywords. It does not
+appear as an item with today as the date.
 
-`push-exif` is named as forbidden because its own help text is "Write photo
-metadata to original files in the Photos library". It is the one operation that
-would modify the originals, and it looks like a reasonable next step to an agent
-holding metadata and a library.
+The skill names `push-exif` as a command that you must not run. Its help text says
+"Write photo metadata to original files in the Photos library". It is the one
+command that changes the originals, and an agent that holds metadata and sees a
+library can think it is the next step.
 
-## What is deliberately not automated
+## Work that the skill does not do
 
-- No upscaler, face model, or weights. The skill orchestrates whichever image
-  model you have, and the fidelity rules plus the checks are what make the result
-  a restoration.
-- No metadata editor. Copy, correct what the upscale made false, append
-  provenance. Nothing else.
-- No library management. Deleting, deduplicating, and reorganizing photos is out
-  of scope.
+- The skill has no upscaler, no face model and no weights. It uses the image model
+  that the agent has. The rules and the checks make the result a restore.
+- The skill does not edit metadata. It copies the tags, it corrects the tags that the
+  upscale made false, and it adds the provenance.
+- The skill does not manage the library. It does not delete, deduplicate or
+  reorganize photos.
 
 ## Known limits
 
-- Any Pillow re-encode of a 16-bit RGB TIFF yields 8-bit RGB, and Pillow presents
-  that input as 8-bit, so a rotated 16-bit RGB TIFF can lose depth without a
-  warning. There is no signal to detect the demotion.
-- On a host without `exiftool`, only the raw EXIF blob and ICC profile cross. The
-  run reports `degraded` and names the gap.
-- A sidecar's caption is skipped, with a shortfall, when the output carries
-  translated XMP descriptions, because a bare `Description` write deletes the
-  translations.
+- A Pillow encode of a 16-bit RGB TIFF writes 8 bits. Pillow also reports that input
+  as 8 bits, so a rotated 16-bit RGB TIFF can lose depth with no warning. The script
+  has no signal to detect it.
+- Without `exiftool`, the script carries only the raw EXIF block and the color
+  profile. The run reports `degraded` and names each gap.
+- The script does not merge the caption of a sidecar when the output has translated
+  XMP descriptions. A plain `Description` write removes the translations. The run
+  reports the skipped merge as a shortfall.
 
-## Behaviours worth knowing before you edit
+## Behaviors to know before you edit the scripts
 
-These were verified against exiftool 13.55 and each fails *silently* if you get it
-wrong:
+Each item below was tested against exiftool 13.55. Each one fails with no message
+when you get it wrong.
 
-1. `-all:all` beats explicit assignments in the same invocation. Copy and correct
-   need separate passes.
-2. `-Orientation=1` is ignored; `-Orientation#=1` works. The `#` forces numeric.
-3. The writable dimension tags are `ExifImageWidth` / `ExifImageHeight`.
-   `PixelXDimension` is rejected as undefined.
-4. `-Keywords+=` appends to list tags, but `-Caption-Abstract+=` is a numeric shift
-   on a string tag and the value is dropped with only a warning.
-5. `-ICC_Profile:all` writes nothing to a file that has no profile; the plain
-   `-ICC_Profile` tag is what writes it.
-6. `-s3` joins list values with `", "`, so reading keywords that way and splitting
-   on commas destroys a keyword like `Washington, D.C.`. Read list tags as JSON.
+1. `-all:all` wins over an explicit value in the same command. Copy and correct
+   need two separate commands.
+2. `-Orientation=1` does nothing. `-Orientation#=1` works. The `#` makes the value
+   numeric.
+3. The writable dimension tags are `ExifImageWidth` and `ExifImageHeight`.
+   `PixelXDimension` is not a valid name for a write.
+4. `-Keywords+=` adds to a list tag. `-Caption-Abstract+=` does a numeric shift on a
+   string tag, and the value is lost with only a warning.
+5. `-ICC_Profile:all` writes nothing into a file that has no profile. The plain
+   `-ICC_Profile` writes it.
+6. `-s3` joins the items of a list with `", "`. If you split that text on commas,
+   the keyword `Washington, D.C.` becomes two keywords. Read a list tag as JSON.
+
+## What the review page taught
+
+Nine review rounds found 60 problems in the review page. All of them are fixed. Two
+results are worth keeping.
+
+A test of the markup is not a test of the page. The range input was a sibling of the
+slider element, so the script stopped at setup. Record, Done and Download never ran,
+and every Python test passed because each test only checked that the elements
+existed. The suite now loads a real page in a browser, moves a slider and records a
+verdict, and it fails on any error from the page. A second round put a real newline
+inside a string in the script, and the browser test found it at once.
+
+One fault class came back five times. The key that identifies a photo in the verdict
+file was first the file name, then the folder and the file name, then a value that
+depended on the other photos in the run, then the path from the project, and finally
+the path from the verdict file. Each version was correct for the case in front of
+it. The version that holds uses the pair and the location of the verdict file,
+because those are the two values that must stay the same for a verdict file to mean
+anything.
+
+The lesson is the same as for the metadata work. When one class of fault comes back,
+the mechanism is wrong.

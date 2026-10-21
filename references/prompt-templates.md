@@ -6,14 +6,14 @@ images. Prefer low edit strength and localized corrections.
 
 ## Which model to hand this to
 
-The image models reachable through **Gemini** and **Codex** have held up best on
-restoration work; prefer them when there is a choice. Two habits matter more than
+The image models reachable through Gemini and Codex have held up best on
+restoration work. Prefer them when there is a choice. Two habits matter more than
 the choice itself:
 
-- Use the model's **image-editing** path with the source passed as the image to
+- Use the model's image-editing path with the source passed as the image to
   edit. A text-to-image prompt that describes the photo produces a lookalike, and
   a lookalike is not a restoration however good it is.
-- Ask for the **lowest edit strength** the tool exposes, then check grain and
+- Ask for the lowest edit strength the tool exposes, then check grain and
   flat-region texture. A model that returns smooth skin made a decision about
   what kind of photo it was looking at.
 
@@ -24,7 +24,7 @@ honoured, and re-verify after any model or version change.
 ## Grain clause
 
 Append the clause that matches the decision from `references/film-grain.md`.
-Never leave grain unmentioned in a film-source prompt; unspecified grain is the
+Never leave grain unmentioned in a film-source prompt. Unspecified grain is the
 texture a super-resolution model flattens first.
 
 | Decision | Clause to append |
@@ -35,8 +35,8 @@ texture a super-resolution model flattens first.
 | None (digital) | `Do not add film grain. Preserve the digital image's existing noise character and do not introduce texture that was not in the source.` |
 
 Because a faithful 2× upscale leaves grain twice as large in pixels, the render
-should show grain that is *coarser in pixels and identical in structure*. Grain
-that vanishes in flat areas has been averaged away; grain that is uniformly
+must show grain that is *coarser in pixels and identical in structure*. Grain
+that vanishes in flat areas has been averaged away. Grain that is uniformly
 tiny everywhere has been synthesised by the upscaler.
 
 ## A. Ordinary photograph (default)
@@ -77,13 +77,13 @@ photographic texture. Do not erase age lines, alter expressions, repaint
 clothing, modernize materials, colorize black-and-white, or invent faces,
 letters, patterns, or historical details. Preserve image boundaries and
 subject scale. Keep the paper's surface texture separate from the film grain and
-preserve both; do not let one be mistaken for the other or amplified on the way
+preserve both. Do not let one be mistaken for the other or amplified on the way
 up.
 
 ## D. Group portraits
 
-Upscale 2x conservatively. Protect **every** individual equally, including
-small, partially obscured or background faces; retain exact head count,
+Upscale 2x conservatively. Protect every individual equally, including
+small, partially obscured or background faces. Retain exact head count,
 placement, expression, apparent age, silhouette, clothing, and interactions.
 Do not refine a small face using speculative details. Do not alter hands,
 proportions, or overlap/occlusion relationships. Restore global image quality
@@ -94,7 +94,7 @@ without re-generating people.
 Increase perceived detail beyond the conservative baseline while continuing
 to preserve all identity, expression, and geometry invariants. Where higher
 detail would require hallucinating distinct physical features, refrain from
-doing so. Prefer local improvements to global reconstruction; compare with
+doing so. Prefer local improvements to global reconstruction. Compare with
 the original and discard any identity-changing candidate. Higher detail is not
 a licence for cleaner texture: sharper does not mean smoother, and grain must
 not be traded for invented micro-detail.

@@ -7,7 +7,7 @@ what to correct, and what to record.
 
 ## The rule that matters most
 
-**The metadata belongs to the source, not to the process.** Copy it, correct only
+The metadata belongs to the source, not to the process. Copy it, correct only
 what the upscale made false, append your provenance, and never replace the
 owner's words.
 
@@ -17,15 +17,15 @@ A render is whatever tool produced it, and those tools stamp things: their own
 camera, their own location, a processing timestamp, a comment, a caption. None of
 that is evidence about the photograph.
 
-So the metadata pass works on a **blank slate**. When the pixels are copied
+So the metadata pass works on a blank slate. When the pixels are copied
 through unchanged, the staged file is stripped of everything (`exiftool -all=`)
 before the source's metadata is written onto it. What arrives is the source's,
 and there is nothing to un-invent.
 
 This replaced an earlier design that copied everything and then cleared what the
-render had invented. That version needed an entry for every tag a tool might
+render had invented. That version needed an entry for every tag a tool can
 stamp -- dates, camera, GPS, caption, comment, thumbnail, dimensions -- and each
-addition created the next gap. Stripping once is bounded; enumerating is not.
+addition created the next gap. Stripping once is bounded. Enumerating is not.
 
 ## What travels, and what changes
 
@@ -35,14 +35,14 @@ addition created the next gap. Stripping once is bounded; enumerating is not.
 | `Make`, `Model`, `LensModel`, `SerialNumber`, exposure, ISO, focal length | Copy unchanged | Still the same camera and the same exposure. |
 | GPS block | Copy unchanged | Still the same place. |
 | `Rating`, `Keywords`, `Subject`, `Title` | Copy unchanged, then add | These are the owner's organization, not yours. |
-| `Caption-Abstract`, `XMP-dc:Description` | **Append** | The owner's words. A restoration that eats a caption is indistinguishable from data loss. |
+| `Caption-Abstract`, `XMP-dc:Description` | Append | The owner's words. A restoration that eats a caption is indistinguishable from data loss. |
 | ICC profile | Copy unchanged | Color intent. |
 | `Orientation` | Set to `1` | Pixels are already upright, so an orientation tag left at 6 or 8 rotates a correct image. |
 | `ExifImageWidth`, `ExifImageHeight` | Set to actual output pixels | Half-copied metadata that states the old dimensions is worse than no metadata, because it lies confidently. |
 | `Software`, `XMP:CreatorTool` | Set to tool and version | |
 | `XMP-xmpMM:History` | Append one event | The structured, machine-readable record. Read by Lightroom, Bridge, Photoshop. |
-| `EXIF:UserComment` | **Append** the provenance sentence | A source comment is the owner's words too, so it is appended to, not replaced. |
-| `ThumbnailImage`, `PreviewImage` | **Cleared** | `-all:all -unsafe` can carry the source's embedded thumbnail, which is a pre-restoration image that Finder and some DAMs display instead of the real pixels. Cleared explicitly and verified absent. |
+| `EXIF:UserComment` | Append the provenance sentence | A source comment is the owner's words too, so it is appended to, not replaced. |
+| `ThumbnailImage`, `PreviewImage` | Cleared | `-all:all -unsafe` can carry the source's embedded thumbnail, which is a pre-restoration image that Finder and some DAMs display instead of the real pixels. Cleared explicitly and verified absent. |
 
 ## Provenance: when and where the upscale happened
 
@@ -60,12 +60,12 @@ One sentence, written to every place a different reader looks:
 | `IPTC:Keywords` | Photos.app tagging and search |
 
 The keywords `upscaled` and `photo-restore` make a batch findable later.
-`--keyword` adds more; `--no-keywords` suppresses them.
+`--keyword` adds more. `--No-keywords` suppresses them.
 
 ### When goes in the history, not in a date field
 
 The "when" is the processing time. It belongs in `xmpMM:History` and
-`UserComment`. It must **never** go into `DateTimeOriginal` or `CreateDate`,
+`UserComment`. It must never go into `DateTimeOriginal` or `CreateDate`,
 because that would silently refile a 1962 photograph as a 2026 one. This is the
 whole reason for writing provenance to a separate field.
 
@@ -73,7 +73,7 @@ whole reason for writing provenance to a separate field.
 
 Re-running the finalize step on the same file must not stack the sentence
 repeatedly. Before appending, check whether this tool's marker for this scale is
-already present, and skip if so. `--note` replaces the default wording;
+already present, and skip if so. `--note` replaces the default wording. 
 `--no-appearance-tags` leaves captions entirely untouched.
 
 ## Naming
@@ -88,7 +88,7 @@ already present, and skip if so. `--note` replaces the default wording;
 The suffix matches the vocabulary already used in the fidelity rules, so a
 filename and a delivered claim say the same thing.
 
-Collisions append `-2`, `-3`. An existing file is never silently overwritten;
+Collisions append `-2`, `-3`. An existing file is never silently overwritten. 
 `--force` is the explicit opt-in. Keeping the source stem is what makes a folder
 of results sort next to its originals and stay traceable.
 
@@ -98,12 +98,12 @@ Default (`--format auto`) follows the source container:
 
 | Source | Output | Note |
 | --- | --- | --- |
-| JPEG | JPEG q95, no chroma subsampling | No extra generation when the render is already JPEG — pixels are copied, not re-encoded. |
+| JPEG | JPEG q95, no chroma subsampling | No extra generation when the render is already JPEG. The script copies the pixels and does not encode them again. |
 | PNG | PNG | |
 | TIFF | TIFF (LZW) | |
-| HEIC / HEIF / AVIF | JPEG | Pillow cannot decode these. ImageMagick or macOS `sips` is required; the script refuses rather than writing pixels it could not read. |
+| HEIC / HEIF / AVIF | JPEG | Pillow cannot decode these. ImageMagick or macOS `sips` is required. The script refuses rather than writing pixels it can not read. |
 
-PNG *can* hold EXIF, IPTC, and XMP — exiftool writes and reads all of it. The
+PNG can hold EXIF, IPTC, and XMP. Exiftool writes and reads all of it. The
 reason JPEG is the default is narrower: consumer readers such as Photos.app,
 Preview, and most viewers ignore PNG's metadata chunks. Portable metadata is
 worth more than pixel purity for an archive.
@@ -113,8 +113,8 @@ that it trades away portable metadata when you use it.
 
 ## What the finalize step verifies
 
-Order is fixed: **encode, then copy, then correct, then verify.** Copying before
-encoding loses everything; verifying before correcting measures the wrong thing.
+Order is fixed: encode, then copy, then correct, then verify. Copying before
+encoding loses everything. Verifying before correcting measures the wrong thing.
 
 The check compares the output against the source and against its own pixels:
 
@@ -136,7 +136,7 @@ The check compares the output against the source and against its own pixels:
 | Result | Meaning | What to do |
 | --- | --- | --- |
 | `pass` | Everything carried. | Deliver. |
-| `degraded` | A known gap: exiftool absent, so only the raw EXIF blob and ICC profile crossed and provenance was not written; or an ICC profile dropped because it no longer describes the output pixels. Exit 0, shortfall listed. | Report the shortfall it names rather than describing it as an exiftool gap. |
+| `degraded` | A known gap: exiftool absent, so only the raw EXIF blob and ICC profile crossed and provenance was not written. Or an ICC profile dropped because it no longer describes the output pixels. Exit 0, shortfall listed. | Report the shortfall it names rather than describing it as an exiftool gap. |
 | `fail` | A core tag is missing, a dimension tag disagrees, or a caption was replaced. Exit 1, file renamed `*_UNVERIFIED`. | Do not deliver. Do not import into Photos. |
 
 ## Verified exiftool behavior
@@ -144,18 +144,18 @@ The check compares the output against the source and against its own pixels:
 Each of these produces a wrong result rather than an error, so they are worth
 knowing before trusting a one-line command:
 
-1. **`-all:all` wins over explicit assignments in the same invocation.**
+1. `-all:all` wins over explicit assignments in the same invocation.
    `-TagsFromFile src -all:all -Orientation#=1` leaves the copied orientation in
    place. Overrides need a second pass.
-2. **`-Orientation=1` is silently ignored; `-Orientation#=1` works.** The `#`
+2. `-Orientation=1` is silently ignored. `-Orientation#=1` works. The `#`
    forces numeric assignment.
-3. **The writable dimension tags are `ExifImageWidth` / `ExifImageHeight`.**
+3. The writable dimension tags are `ExifImageWidth` / `ExifImageHeight`.
    `PixelXDimension` and `PixelYDimension` are rejected as undefined.
    `ImageWidth`/`ImageHeight` are updated automatically.
-4. **`-Keywords+=` appends to list tags, but `-Caption-Abstract+=` does not.**
-   On string tags `+=` is a numeric shift; exiftool warns "Shift value is not a
+4. `-Keywords+=` appends to list tags, but `-Caption-Abstract+=` does not.
+   On string tags `+=` is a numeric shift. Exiftool warns "Shift value is not a
    number" and drops the value. Read the old value and write the concatenation.
-5. **The history tag is `XMP-xmpMM:History`**, written as
+5. The history tag is `XMP-xmpMM:History`, written as
    `-XMP-xmpMM:History+={Action=saved,SoftwareAgent=...,When=...}`. `XMP:History`
    does not exist and silently lands somewhere useless.
 

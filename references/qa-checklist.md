@@ -5,7 +5,7 @@ mask the affected area, or revert to a deterministic baseline.
 
 ## Hard checks (must pass)
 
-- [ ] Correct subject count and identities; no invented faces/people.
+- [ ] Correct subject count and identities. No invented faces/people.
 - [ ] Each face's defining structure and asymmetry retained (eyes, nose,
       cheekbones, mouth, jaw, ears, hairline, marks).
 - [ ] Facial expressions, gaze direction, teeth visibility, and apparent age
@@ -32,17 +32,17 @@ mask the affected area, or revert to a deterministic baseline.
       hair strands, or background text.
 - [ ] No crushed shadows, clipped highlights, artificial HDR, or extreme saturation.
 - [ ] Reasonable pixel dimension increase (typically 2x width and height).
-- [ ] Original file retained; outputs labeled if multiple variants are generated.
+- [ ] Original file retained. Outputs labeled if multiple variants are generated.
 
 ## Grain checks
 
-Grain is the one texture this skill may add, and only under disclosure.
+Grain is the one texture this skill can add, and only under disclosure.
 
 - [ ] Grain decision established from the source, not from the year alone:
       `preserved`, `recovered`, `reconstructed`, or `none`.
-- [ ] Flat regions — sky, wall, out-of-focus background — still show texture
+- [ ] Flat regions still show texture. Check the sky, a wall, or an out-of-focus
       at 100%. Smooth and textureless means grain was destroyed.
-- [ ] Clump size is approximately `source × scale`. A 2× upscale should show
+- [ ] Clump size is approximately `source × scale`. A 2× upscale must show
       grain twice as large in pixels and identical in structure.
 - [ ] Texture is not uniform and identical everywhere, which would mean the
       upscaler substituted synthetic texture.
@@ -69,7 +69,7 @@ soft checks.
 - [ ] `Orientation` is `1`. An inherited 6 or 8 rotates an already-upright image.
 - [ ] `ExifImageWidth` / `ExifImageHeight` match the real output pixels, not the
       source's. Half-copied metadata that states the old size is worse than none.
-- [ ] Existing caption is still present as a substring; the provenance sentence
+- [ ] Existing caption is still present as a substring. The provenance sentence
       was appended, not substituted.
 - [ ] No source keyword was dropped.
 - [ ] Provenance records when and where: the sentence in `UserComment`, the
@@ -85,10 +85,10 @@ soft checks.
 1. View source and result side-by-side in identical framing at the same
    *apparent* size. Look for scene/content drift.
 2. View at 100% output scale. Look for noise, sharpening, texture artifacts.
-3. Compare source and result *faces* at matched apparent size; inspect
+3. Compare source and result *faces* at matched apparent size. Inspect
    vulnerable details individually. Repeat for all people.
 4. If possible, shrink the enhanced result to source dimensions and
-   compare again; pixel increases can conceal geometry/expression drift.
+   compare again. Pixel increases can conceal geometry/expression drift.
 5. If uncertain, choose the less aggressive restoration.
 
 Optionally create a comparison sheet:
@@ -100,5 +100,5 @@ python scripts/compare.py original.jpg enhanced.png \
 ```
 
 The crop is `[left,top,right,bottom]` in source pixels, optional.
-The comparison utility does *not* assert identity preservation; its purpose
+The comparison utility does *not* assert identity preservation. Its purpose
 is to make mismatches easier for a human/vision reviewer to notice.

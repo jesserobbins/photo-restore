@@ -1,11 +1,12 @@
 # Command reference
 
-Two scripts do the mechanical work: `finalize.py` names the output and carries the
-metadata, `new-project.py` scaffolds a project. Everything else in the skill is
-instructions for the agent doing the restoration.
+The skill has four scripts. Two of them do the mechanical work on a photograph:
+`finalize.py` names the output file and carries the metadata, and `new-project.py`
+makes a project folder. `qa-page.py` builds the review page. `compare.py` makes a
+single comparison sheet.
 
-Neither script upscales anything. They take the source photo and the render your
-image model produced.
+None of the scripts makes the upscaled pixels. Each script takes the source photo
+and the render that your image model made.
 
 ## finalize.py
 
@@ -13,88 +14,93 @@ image model produced.
 python scripts/finalize.py SOURCE RENDER [options]
 ```
 
-- `SOURCE` — the authoritative original. Read-only evidence; never modified.
-- `RENDER` — the upscaled output from your image model.
+`SOURCE` is the original photo. The script reads it and does not change it.
+`RENDER` is the file that your image model made.
 
-Order of operations is fixed: encode, copy metadata, correct, verify. Copying
-before encoding loses everything; verifying before correcting measures the wrong
-thing.
+The script works in a fixed order. It encodes the output, copies the metadata,
+corrects the tags that the upscale made false, and then checks the result. If you
+copy the metadata before the encode, you lose it. If you check the result before
+the correction, you measure the wrong thing.
 
-### Output
+### Output file
 
-`<out-dir>/<source-stem><suffix>.<ext>`, defaulting to the suffix `_upscale` and
-the format of the source container. Collisions append `-2`, `-3`; nothing is
-overwritten without `--force`.
+The output name is `<out-dir>/<source-stem><suffix>.<ext>`. The suffix `_upscale`
+is the default, and the format follows the source file. If the name is taken, the
+script adds `-2` or `-3`. The script never replaces an existing file unless you pass
+`--force`.
 
-With `--project`, one entry is appended to the project's `manifest.json`,
-including the verification result.
+If you pass `--project`, the script adds one entry to the project `manifest.json`.
+The entry includes the result of the check.
 
 ### Exit codes
 
 | Code | Meaning |
 | --- | --- |
-| 0 | Verified (`pass`), or `degraded` with the shortfall named |
-| 1 | Verification failed: the output is renamed `*_UNVERIFIED`, do not deliver |
-| 2 | Bad invocation or environment problem: nothing was written |
+| 0 | The check passed, or the run is `degraded` and names each loss |
+| 1 | The check failed. The script renamed the output `*_UNVERIFIED`. Do not deliver it |
+| 2 | The command or the environment is wrong. The script wrote nothing |
 
-`degraded` covers any known gap — no `exiftool`, or a profile or field that could
-not be carried. It exits 0 because a named shortfall is not a failure, but it is
-not a success claim either: report it.
+A run is `degraded` when the script cannot carry something. Examples are a missing
+`exiftool` and a color profile that no longer fits the pixels. The exit code is 0
+because the run names the loss. Report the loss to the user.
 
 ### Options
 
-| Flag | Default | |
+| Flag | Default | What it does |
 | --- | --- | --- |
-| `--out-dir DIR` | alongside the source, or `<project>/output` | destination directory |
-| `--suffix STR` | `_upscale` | use `_enhance` for the higher-detail variant. Empty is rejected: it is how a run would overwrite its own source |
-| `--format {auto,jpeg,png,tiff}` | `auto` | `auto` follows the source container: JPEG at q95 with no chroma subsampling, PNG as PNG, TIFF as LZW TIFF, HEIC as JPEG |
-| `--quality N` | `95` | JPEG quality |
-| `--project DIR` | — | append to `DIR/manifest.json` |
-| `--note STR` | generated | replace the provenance sentence |
-| `--keyword STR` | — | extra keyword, repeatable |
-| `--no-appearance-tags` | off | leave captions and descriptions exactly as copied |
-| `--no-keywords` | off | add no keywords |
-| `--grain {preserved,recovered,reconstructed,none,unknown}` | `unknown` | recorded in the manifest; `reconstructed` is disclosed in the provenance sentence automatically |
-| `--master-name STR` | — | filename of the unedited master, for the manifest |
-| `--force` | off | overwrite an existing output |
-| `--dry-run` | off | print the plan and exit without writing |
-| `--json` | off | emit the result as JSON |
+| `--out-dir DIR` | the source folder, or `<project>/output` | sets the output folder |
+| `--suffix STR` | `_upscale` | sets the file suffix. Use `_enhance` for the detail variant |
+| `--format {auto,jpeg,png,tiff}` | `auto` | sets the output format. `auto` follows the source |
+| `--quality N` | `95` | sets the JPEG quality |
+| `--project DIR` | none | adds an entry to `DIR/manifest.json` |
+| `--note STR` | generated | replaces the provenance sentence |
+| `--keyword STR` | none | adds a keyword. You can repeat this flag |
+| `--no-appearance-tags` | off | leaves the captions exactly as copied |
+| `--no-keywords` | off | adds no keywords |
+| `--grain VALUE` | `unknown` | records the grain decision in the manifest |
+| `--master-name STR` | none | records the name of the unedited master |
+| `--force` | off | replaces an existing output file |
+| `--dry-run` | off | prints the plan and writes nothing |
+| `--json` | off | prints the result as JSON |
 
-### What it verifies
+Do not pass an empty `--suffix`. An empty suffix is how a run overwrites its own
+source file. The script refuses it.
 
-Against the source, and against its own pixels:
+### What the script checks
 
-- every core tag the source had is still present (`DateTimeOriginal`,
-  `CreateDate`, `Make`, `Model`, `GPSLatitude`, `Rating`)
-- `DateTimeOriginal` is byte-identical to the source
-- EXIF and XMP orientation are both horizontal
-- real dimensions match what the run recorded, and the dimension tags agree with
-  the real width
-- the output decodes: headers over truncated pixel data are not enough
-- the output container is what was asked for, decided by contents not filename
-- the provenance note is present, and a history event was recorded
-- the source caption is still a substring, and no source keyword was dropped
-- no embedded thumbnail survives
-- an EXIF/XMP date disagreement is reported rather than silently reconciled
-- a reconstructed grain is disclosed
+The script compares the output against the source file and against its own pixels.
+
+- Each core tag that the source had is still in the output. The core tags are
+  `DateTimeOriginal`, `CreateDate`, `Make`, `Model`, `GPSLatitude` and `Rating`.
+- `DateTimeOriginal` is byte for byte the same as the source.
+- The EXIF orientation and the XMP orientation are both horizontal.
+- The real pixel dimensions equal the dimensions that the run recorded.
+- The output file decodes. Correct headers over a truncated image do not pass.
+- The output format is the format that you asked for. The script reads the file
+  content, not the file name.
+- The provenance sentence is present, and the history entry is present.
+- The source caption is still in the output, and no source keyword is missing.
+- No thumbnail from the source is in the output.
+- The script reports a disagreement between the EXIF date and the XMP date.
+- The file discloses a reconstructed grain.
 
 ### Examples
 
 ```bash
-# faithful 2x, metadata carried, verified
+# a faithful 2x restore with the metadata carried and checked
 python scripts/finalize.py IMG_1234.jpg render.png
 
-# inside a project, writing to its output directory
+# inside a project, with the output in the project output folder
 python scripts/finalize.py grandma/source/target.jpg render.png \
   --project grandma --out-dir grandma/output
 
-# higher-detail variant alongside the faithful one
+# a detail variant next to the faithful one
 python scripts/finalize.py IMG_1234.jpg render.png --suffix _enhance
 
-# grain was synthesized on request, and the file will say so
+# grain was added on request, and the file says so
 python scripts/finalize.py IMG_1234.jpg render.png --grain reconstructed
 
-# inspect the plan without writing anything
+# read the plan and write nothing
 python scripts/finalize.py IMG_1234.jpg render.png --dry-run --json
 ```
 
@@ -104,25 +110,26 @@ python scripts/finalize.py IMG_1234.jpg render.png --dry-run --json
 python scripts/new-project.py PATH [options]
 ```
 
-Creates `source/`, `refs/face/`, `refs/body/`, `output/`, `qa/`, `manifest.json`,
-and a README. Refuses a non-empty directory without `--force`.
+The script makes `source/`, `refs/face/`, `refs/body/`, `output/`, `qa/`,
+`manifest.json` and a README. It refuses a folder that is not empty unless you pass
+`--force`.
 
-| Flag | |
+| Flag | What it does |
 | --- | --- |
-| `--name STR` | human label; defaults to the directory name. An explicit value wins over a stored one |
-| `--source FILE` | copy into `source/`, repeatable |
-| `--face FILE` | copy into `refs/face/`, repeatable |
-| `--body FILE` | copy into `refs/body/`, repeatable |
-| `--master FILE` | copy the unedited master into `source/` as `<stem>_master.<ext>`, so it cannot collide with the restore target |
-| `--force` | scaffold into a non-empty directory, merging into the existing manifest |
+| `--name STR` | sets a label for the project. This value wins over a stored label |
+| `--source FILE` | copies a file into `source/`. You can repeat this flag |
+| `--face FILE` | copies a file into `refs/face/`. You can repeat this flag |
+| `--body FILE` | copies a file into `refs/body/`. You can repeat this flag |
+| `--master FILE` | copies the unedited master into `source/` as `<stem>_master.<ext>` |
+| `--force` | adds to an existing project and merges with the existing manifest |
 
-Re-running with identical arguments is idempotent. A file that differs under the
-same name is refused rather than overwritten: `source/` is evidence, and silently
-replacing the photograph being restored is the worst outcome available to this
-script. XMP sidecars travel with their image and follow the same rule.
+You can run the same command twice. The second run accepts identical files. The
+script refuses a different file with the same name, because `source/` holds the
+evidence and a replaced photo destroys it. An XMP sidecar belongs to its image and
+follows the same rule.
 
-`--force` merges: `assets` (the finalizer's verification history), `created`, the
-`name`, and any notes already in the manifest all survive.
+`--force` merges. The entries that `finalize.py` added, the creation time, the
+label and the notes all stay in the manifest.
 
 ## qa-page.py
 
@@ -130,29 +137,33 @@ script. XMP sidecars travel with their image and follow the same rule.
 python scripts/qa-page.py [--project DIR | --pair SOURCE RENDER ...] [--crop SPEC ...]
 ```
 
-Builds the human review page: a slider per photo pair, callout crops of specific
-details, one verdict per photo, a note per callout, and an append-only verdict log
-at `qa/verdicts.jsonl`. Serves by default and returns when the review is closed.
+The script builds the review page. The page has a slider for each photo pair, a crop
+of each detail, one verdict for each photo and a note for each crop. The verdicts go
+to `qa/verdicts.jsonl`. The script serves the page and returns when the reviewer
+closes it.
 
-| Flag | Default | |
+| Flag | Default | What it does |
 | --- | --- | --- |
-| `--project DIR` | — | pair photos from `DIR/manifest.json`, skipping failed verifications |
-| `--pair SOURCE RENDER` | — | review one pair; repeatable, overrides the manifest |
-| `--crop SPEC` | — | `LABEL:L,T,R,B` for all photos, or `PHOTO:LABEL:L,T,R,B`. Source pixels |
-| `--out-dir DIR` | `<project>/qa` or `./qa` | where the page and verdicts live |
-| `--static` | off | write one self-contained HTML file instead of serving |
-| `--host` | `127.0.0.1` | `0.0.0.0` to reach it from Codex's browser |
-| `--port` | free port | |
-| `--open` | off | open a browser, best effort |
-| `--idle-timeout` | `1800` | close an abandoned review; `0` disables |
-| `--import FILE` | — | validate and append verdicts downloaded in static mode |
-| `--clean` | off | remove generated files; keeps `verdicts.jsonl` |
-| `--verdicts` | off | with `--clean`, remove the verdict log too |
-| `--json` | off | emit a summary |
+| `--project DIR` | none | takes the photo pairs from `DIR/manifest.json` |
+| `--pair SOURCE RENDER` | none | reviews one pair. You can repeat this flag |
+| `--crop SPEC` | none | adds a crop. Use `LABEL:L,T,R,B` for every photo or `PHOTO:LABEL:L,T,R,B` |
+| `--out-dir DIR` | `<project>/qa` or `./qa` | sets the folder for the page and the verdicts |
+| `--static` | off | writes one HTML file and starts no server |
+| `--host` | `127.0.0.1` | sets the listen address. Use `0.0.0.0` for the Codex browser |
+| `--port` | a free port | sets the port |
+| `--open` | off | opens a browser if one is available |
+| `--idle-timeout` | `1800` | closes an inactive review after N seconds. `0` turns it off |
+| `--import FILE` | none | checks and adds the verdicts that you downloaded |
+| `--clean` | off | removes the files that the script made. It keeps the verdicts |
+| `--verdicts` | off | with `--clean`, removes the verdict file too |
+| `--json` | off | prints the result as JSON |
 
-Exit codes: 0 closed with a verdict (or page written), 1 closed with nothing
-recorded, 2 usage or environment error. Per-photo callouts, id stability, and the
-per-environment recipes are in [`../references/qa-page.md`](../references/qa-page.md).
+The exit code is 0 when the review closed with at least one verdict, or when the
+script wrote the page. The code is 1 when the review closed with no verdict. The
+code is 2 when the command or the environment is wrong.
+
+`references/qa-page.md` has the steps for each environment, the callout rules and
+the format of the verdict file.
 
 ## compare.py
 
@@ -160,21 +171,24 @@ per-environment recipes are in [`../references/qa-page.md`](../references/qa-pag
 python scripts/compare.py ORIGINAL RESTORED [--out FILE] [--crop L,T,R,B]
 ```
 
-Builds a three-panel sheet: source at the output's apparent size, the restored
-result, and an amplified pixel difference. A review aid, not identity
-verification. `--crop` uses **source** pixel coordinates.
+The script makes one image with three parts. The first part is the source at the
+size of the output. The second part is the restored result. The third part is the
+difference, with the contrast increased.
 
-## Grain decisions
+The sheet helps a reviewer to see a change. It does not prove that the identity
+stayed the same. `--crop` uses the pixel coordinates of the source file.
 
-`--grain` records what was done; the script does not alter texture itself.
+## Grain values
 
-| Value | Means |
+`--grain` records the decision. The script does not change the texture.
+
+| Value | Meaning |
 | --- | --- |
-| `preserved` | source grain survived the restore |
-| `recovered` | attenuated grain was rebuilt from the source's own flat regions |
-| `reconstructed` | grain was synthesized to match the stock, and the file says so |
-| `none` | digital capture; no grain was added |
-| `unknown` | not established — the default, and honest about it |
+| `preserved` | the grain of the source survived the restore |
+| `recovered` | the script rebuilt weak grain from the flat areas of the source |
+| `reconstructed` | the script added grain to match the film stock, and the file says so |
+| `none` | the photo came from a digital camera, and the script added no grain |
+| `unknown` | the user did not establish the decision. This is the default |
 
-`reconstructed` appends the disclosure to the provenance sentence by
-construction, so a reconstruction cannot be delivered as preservation.
+When the value is `reconstructed`, the script adds the disclosure to the provenance
+sentence. A reconstruction therefore cannot leave the script as preservation.

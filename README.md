@@ -12,7 +12,7 @@ result and keeps the identity, the facial features, the expression, the gaze, th
 pose, the body proportions, the clothing, the composition and the historical
 authenticity of each subject.
 
-Start with a single photo and . Use the optional features for more demanding work.
+Start with a single photo. Use the optional features for more demanding work.
 
 - **Reference photographs.** Supply more face or body photos of the same person to
   guide an identity-accurate restore. The skill keeps the expression, the pose and
@@ -39,8 +39,6 @@ tool for the job.
 
 Use the skill directly for a simple restore. Use the project structure, the
 reference images and the verification tools for harder work.
-
-## Motivation
 
 ## Motivation
 
@@ -267,3 +265,17 @@ The canonical copy of this skill is
 You can fork it. If you publish a fork, keep the name and the provenance.
 
 The license is MIT. See [LICENSE](LICENSE).
+
+## How this project is developed
+
+This project uses [greenroom](https://github.com/jesserobbins/greenroom), a layout
+with two repos: the public code you are reading, and a private companion repo that
+holds the design notes, drafts and review notes behind it.
+
+The split is deliberate. The reasoning and the half-formed drafts stay in git, so
+nothing is lost between sessions, and they never get published. What ships here has
+been through that room first. The private repo is never public, so nothing in it can
+leak into a release by accident.
+
+If you keep private notes beside a public repo of your own, that is the same problem
+greenroom solves.

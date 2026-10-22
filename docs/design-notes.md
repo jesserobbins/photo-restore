@@ -212,3 +212,24 @@ The tradeoff is real. The skills directory shows the description in its listing,
 a trigger list sells less than a summary. The README, llms.txt and the repository
 description carry the sales copy. The description is for the model that must decide
 whether to read the skill.
+
+## Where the thinking happens
+
+This repo is the stage. The design notes, the drafts, the review notes and the
+sessions that produced these rules live in a private companion repo, in a greenroom
+layout ([greenroom](https://github.com/jesserobbins/greenroom)).
+
+That is why these pages argue from evidence rather than from authority. The private
+notes hold the observations a rule came from, including the ones that read badly: a
+face that drifted on repeated passes, a resolution claim that rested on the delivery
+size, an agent that recorded preserved grain on an image it never examined. What
+ships here is the rule and the reason. The transcript of how it was learned stays
+private, and a reader who wants to check the reasoning can test the rule against
+their own photograph instead.
+
+The layout comes with a few rules. The private repo is never published. Public
+artifacts are referenced by URL rather than by a local path, because the path is itself
+a small leak. New design thinking starts private and is published here when it is worth
+citing. A claim that matters enough to appear in this repo has to survive the room
+first, which is the same standard the skill asks of a restored photograph: evidence
+before the claim.

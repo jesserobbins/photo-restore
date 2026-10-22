@@ -54,12 +54,18 @@ osxphotos export ./source --uuid <UUID> --sidecar xmp --export-aae
 
 Notes:
 
-- Do not pass `--skip-edited`. For a photo the owner has already adjusted,
-  the edited render is the version they have seen and approved, and it is the
-  one to restore. For archival work on the unedited original instead, export the
-  master file as well and pass it to `new-project.py --master`, which copies it
-  in as `<stem>_master.<ext>` beside the source. `finalize.py` has no `--master`
-  option: you choose which file is SOURCE by which path you pass.
+- Do not pass `--skip-edited` when the owner has been viewing an adjusted photo. The
+  edited render is what they have seen, and it is the one to restore for that work.
+  For archival work on the unedited original instead, export the master as well and
+  pass it to `new-project.py --master`, which copies it in as `<stem>_master.<ext>`
+  beside the source. `finalize.py` has no `--master` option: you choose which file is
+  SOURCE by which path you pass.
+- Do not decide between the two by habit. Name both versions, say which one you will
+  restore and why, and ask when the answer changes the work. The owner's answer holds
+  for the rest of the batch. Record it with `finalize.py --input-version`.
+- Tell the owner when the two versions do not share a frame. A render can be a crop
+  of the master, so switching sources changes the composition as well as the pixels.
+  Restoring the master's framing and keeping the owner's crop are different jobs.
 - `--sidecar xmp` keeps a machine-readable record beside the file, useful when
   the container cannot hold everything.
 - `--export-aae` keeps the non-destructive edit recipe. If the result is later
@@ -94,12 +100,33 @@ osxphotos import ./output/IMG_1234_upscale.jpg \
 ```
 
 - `--album` accepts a template and creates the album if missing.
-- `--skip-dups` prevents a second copy on a re-run.
+- `--skip-dups` prevents a second copy on a re-run. It also means a retry of an
+  import that already succeeded skips the photo. Add `--dup-albums` to that retry, or
+  the skip also skips the album step. The installed `osxphotos` source confirms the
+  two flags do these two things separately.
 - `--sidecar` can pull keywords, title, and description from an XMP sidecar
   instead of flags.
 - Import adds an asset. The original is not replaced, and the skill must say
   that plainly so nobody wonders which file is which. The restored file is
   identifiable by its suffix and its provenance sentence.
+
+### Import and album are two results, not one
+
+An import can sit at 0% after the photo has already appeared in the library, and the
+progress display redraws itself without reporting anything new. A stalled bar is not
+a failure and a started command is not a success.
+
+Treat the two as separate receipts and report each one:
+
+| Receipt | Values |
+| --- | --- |
+| Import | verified, owner-reported, unknown |
+| Album membership | verified, owner-reported, unknown |
+
+Before any retry, look for the item: its asset identifier, its filename, its date, and
+the original still present in the library. If the photo is there and the album is not,
+add the existing item to the album by its ID. Do not import it again, and do not say
+the album exists because the import command mentioned one.
 
 ## The command that must never run
 
@@ -125,6 +152,28 @@ Check that the capture date matches the source and that the keywords arrived. If
 the asset files under today's date instead of its capture date, the metadata did
 not survive and the import must be redone after fixing it.
 
+## When the application services refuse the session
+
+A restricted tool session can read the library and still be unable to drive the
+application. These are the same failure, and none of them is a hint about the photo:
+
+```text
+Connection Invalid error for service com.apple.hiservices-xpcservice
+SIGABRT / exit code 134
+Can't get application id "com.apple.Photos". (-1728)
+```
+
+Even `osxphotos import --help` can initialize enough AppleScript machinery to crash.
+
+- After one such failure, stop. Do not repeat the route: `open`, AppleScript and
+  `osxphotos` are the same channel. An application that is present, executable and
+  already running is being refused, not restored to health.
+- Do not conclude that the image is corrupt, or that an application is missing,
+  because an application lookup failed.
+- Reading the library does not imply permission to automate it.
+- Say the limit once, give one command the owner can run with a timeout, and stop.
+  Owner-reported completion is a valid receipt; call it that.
+
 ## When osxphotos is not installed
 
 ```sh
@@ -143,9 +192,10 @@ Without it:
 ## Checklist
 
 - [ ] Preflighted the delivered file. It is the original, not a render
-- [ ] `source/` holds the edited render for an adjusted photo (or the master copied in with `--master` used deliberately)
+- [ ] Named both versions when two existed, and recorded the one restored
 - [ ] `finalize.py` reported `pass`
 - [ ] Imported into a named album with `--skip-dups`
 - [ ] Confirmed the new asset carries the capture date
+- [ ] Reported import and album membership separately
 - [ ] Told the user there are now two assets: original and restored
 - [ ] `push-exif` was never run

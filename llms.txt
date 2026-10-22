@@ -11,7 +11,7 @@
 - Repository: https://github.com/jesserobbins/photo-restore
 - Profile: https://github.com/jesserobbins
 - License: MIT
-- Version: 2.1.0
+- Version: 2.2.0
 - Install: `npx skills add jesserobbins/photo-restore`
 - Kind: Agent Skill. The folder holds a `SKILL.md` with instructions and four helper
   scripts.
@@ -30,8 +30,12 @@ the corrections, and it checks the result against the source file.
   pose, body proportions, clothing, background and composition must not change.
 - It carries the metadata from the source file. This includes the capture date, the
   camera, the GPS fix, the rating, the keywords and the caption.
-- It writes a provenance sentence into the file. The sentence names the time and the
-  tool that made the upscale. The capture date does not change.
+- It writes a provenance sentence into the file. The sentence names the time, the
+  tool and the mode that made the upscale, plus the source, native and delivery
+  sizes. The capture date does not change, and the file says when the date came from
+  a photo library rather than from the photograph.
+- It runs in one of three modes: faithful repair, the owner's requested retouch, or a
+  generative interpretation that discloses reconstructed detail.
 - It names the output file after the source file and never replaces a file.
 - It makes a project folder with separate reference folders for the face and the
   body.

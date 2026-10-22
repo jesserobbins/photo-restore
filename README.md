@@ -99,8 +99,12 @@ brew install osxphotos   # macOS only
   that still looks like the person wins over a sharp result that does not.
 - It keeps the record that the camera wrote. Capture date, camera, GPS, rating,
   keywords, caption and color profile go into the output file.
-- It writes down what it did. One sentence names the time and the tool that did
-  the upscale. The sentence goes into the file, and the capture date does not move.
+- It writes down what it did. One sentence names the time, the tool and the mode
+  that did the upscale, and the sizes it worked at. The sentence goes into the file,
+  and the capture date does not move.
+- It works in one of three modes, so a named request is answered instead of refused:
+  faithful repair, the retouch the owner asked for, or a generative interpretation
+  that the file discloses.
 - It names the output file after the source file, and it never overwrites.
 - It builds a review page for a human. The page has a slider, callout crops, and
   one verdict per photo.

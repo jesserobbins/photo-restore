@@ -24,6 +24,20 @@ The page shows these parts for each photo pair.
 The page shows a callout crop with nearest-neighbor scaling at a whole-number
 factor. A smooth scale invents the detail that you are trying to see.
 
+## Which route to take
+
+Decide this before you ask for a review, not after one fails.
+
+| The owner is | Use | Why |
+| --- | --- | --- |
+| in a terminal session (iTerm, Terminal, tmux, an editor terminal) | `--static` | A tool that rendered an image to your console is no evidence the owner saw it. Markdown embeds and image output do not display there. A static file opens by command-click and needs no port |
+| in a host with a browser that can reach a port | the server route | The verdicts land in `qa/verdicts.jsonl` without a download step |
+| in a sandbox that forbids listening sockets | `--static` | Binding a port fails there, and the failure arrives as a late, confusing error |
+
+In a terminal session, print the file path as a clickable link and say plainly that
+the page must be opened. Do not report that the owner has "seen" the result because
+you displayed it.
+
 ## Run the page on a laptop or in the Codex browser
 
 1. Finalize the photo first. A new project has no finished files, and the review
@@ -52,8 +66,8 @@ cannot open the page.
 
 ## Run the page without a server
 
-Use this method when the host has no browser, when no port is reachable, or when
-the sandbox blocks a listening socket.
+This is the default for a terminal session. Use it when the host has no browser,
+when no port is reachable, or when the sandbox blocks a listening socket.
 
 1. Write one HTML file. The file holds every image, so it works from `file://` and
    it still works after you move it or send it by email.
@@ -114,6 +128,23 @@ group photo. The script refuses two labels in one photo that make the same id, a
 it refuses a box that falls outside the source file.
 
 The labelled form belongs to `qa-page.py`. `compare.py` keeps its bare `--crop`.
+
+## What a review can ask
+
+A review answers one of two questions, and the two need different pairs.
+
+- Original against candidate: is this still the same photograph? Use it for a
+  fidelity check.
+- Last accepted version against this revision: did the change I asked for happen?
+  Use it after a requested retouch, where the background and the accepted features
+  should be unchanged and only the named region differs.
+
+When both questions are open, show both.
+
+Show a candidate you rejected, with the reason in the note. Your fidelity assessment
+is not the owner's judgment: in a real session the owner asked to see a preview the
+agent had set aside and judged it better than expected. An approval is the owner's
+record, so do not ask for the same image to be approved twice.
 
 ## The verdict file
 

@@ -20,6 +20,29 @@ capture date, camera, place or caption improved the photo and destroyed the arch
 The file is what someone keeps in ten years, so the metadata is part of the
 deliverable.
 
+## Why there are three modes
+
+The skill began with one rule: conservative is the acceptance rule. A real session
+showed that one rule cannot answer two different kind of request, and the result was
+two failures that look opposite and share a cause.
+
+The first pass did what the rule said and the owner said it did not look as though
+anything had happened. Later, when the owner asked for skin smoothing and a small
+nostril adjustment, the same rule read those requests as forbidden beauty retouching.
+Neither was a prompt problem. The skill had no way to say what had been asked for, so
+every request had to be argued against a prohibition written for a different request.
+
+Three modes fix that by giving each request its own acceptance rule. Faithful repair
+keeps the original rule. Requested retouch makes the owner's named change locally and
+protects the features nobody named. Generative interpretation allows a different
+quality tradeoff with identity and composition unchanged. The default is still the
+conservative one, so nothing about the earlier behavior is lost; it is now one mode
+instead of the only one.
+
+The mode is recorded and disclosed for the same reason grain is. A file that says
+"faithful repair" is making a claim a reader can check, and a generative run that did
+not say so would read as recovered detail.
+
 ## The empty-file rule
 
 The output file holds the pixels from the render and the record from the source. It
@@ -47,8 +70,14 @@ later will grow the same faults.
 
 One sentence records the time and the tool of the upscale:
 
-> Upscaled 2.0x (4000x3000 to 8000x6000) by photo-restore 2.0, conservative mode,
+> Upscaled 2.0x (4000x3000 to 8000x6000) by photo-restore 2.2, faithful repair mode,
 > on 2026-10-19. Source: IMG_1234.jpg. Capture date unchanged.
+
+The sentence names the mode because the mode is a claim about where the detail came
+from. Faithful repair claims nothing beyond the source. A generative run appends a
+disclosure, and a date that the library supplied rather than the file appends its own,
+so neither can pass as something it is not. The script verifies both the way it
+verifies the grain disclosure: by reading them back out of the written file.
 
 The script writes the sentence to five places. The places are `Software`,
 `CreatorTool`, `UserComment`, `XMP-xmpMM:History`, and the caption and keywords.

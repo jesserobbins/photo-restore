@@ -8,13 +8,13 @@ description: >
   grain of a photo is in question, when the source may be a chat-app re-encode, or
   when a restored file must go back into Apple Photos.
 metadata:
-  version: "2.1.0"
-  default-mode: "conservative"
+  version: "2.2.0"
+  default-mode: "faithful"
   author: "Jesse Robbins (@jesserobbins)"
   homepage: "https://jesserobbins.com"
   repository: "https://github.com/jesserobbins/photo-restore"
   license: "MIT"
-  keywords: "photo restoration, photo upscaling, exif preservation, metadata provenance, film grain, old photo repair, osxphotos, apple photos, archival photography"
+  keywords: "photo restoration, photo upscaling, exif preservation, metadata provenance, film grain, old photo repair, requested retouch, osxphotos, apple photos, archival photography"
   canonical: "https://github.com/jesserobbins/photo-restore"
 ---
 
@@ -67,6 +67,50 @@ Order of priorities:
 
 Never give up a higher priority for a lower one.
 
+## Three modes, and what each one may change
+
+A restore is not one operation. An owner can ask for a repair, for a named cosmetic
+change, or for a stronger rebuild of lost detail. Each request has its own acceptance
+rule, and the work must run in the mode that was asked for.
+
+| Mode | What it may change | What it must not change |
+| --- | --- | --- |
+| Faithful repair | The technical quality: noise, sharpness, tone, color, small damage | Any part of the content. No cosmetic change at all |
+| Requested retouch | The regions the owner named, made as local edits | Everything outside those regions, and eyes, lips, teeth, nostril outlines and facial contours unless the owner names them |
+| Generative interpretation | How much detail is reconstructed | Identity, expression, gaze, age, composition, the number of subjects |
+
+The default is faithful repair. A named request selects the mode for the rest of that
+photo, or for the named region only when the owner limits it.
+
+A request for a named retouch is not a violation of the fidelity rules. Skin
+smoothing, a small nostril adjustment, makeup-style cleanup and removal of facial
+flyaways are all in scope when the owner asks for them. What is not in scope is a
+cosmetic change nobody asked for, and any change that moves identity, expression or
+composition.
+
+More regeneration is not a new photo. It is a different quality tradeoff with the
+same limits. When the owner asks for stronger results, do not quietly return an
+almost unchanged resize. When a result is accepted, keep it as the baseline and do
+not redo the work that was already accepted.
+
+Report the mode you ran. `finalize.py --mode` records it in the manifest, and the
+generative mode adds a disclosure to the provenance sentence, because reconstructed
+detail must never read as recovered detail.
+
+### Do not invent the controls
+
+Name the controls that the image tool actually has, and nothing more. A typical image
+tool exposes a prompt, the image to edit, reference images and a transparency setting.
+It may not expose a model selector, a numeric edit strength, a quality setting or an
+exact output size. A prompt that asks for "low strength" did not set anything.
+
+A composite percentage is a compositing weight. A 35% blend of a generated patch is
+not a statement that the model ran at 35% reconstruction strength, and it must not be
+reported as one.
+
+Say what you asked for, what the tool accepted, and what you then measured in the
+output. When a selection was not possible, say that too.
+
 ## When to use
 
 Use this skill when the user asks to upscale, improve, clean, restore, sharpen,
@@ -81,9 +125,11 @@ of the person to use as the source.
 When the user supplies reference photos of the same person, use them as identity
 limits. Do not use them as replacement content.
 
-If the user asks for a style, a composite, a new pose, a different expression, a
-face swap or a new interpretation, say that the request is outside this skill. A
-face swap takes the face from a different photo, and that is not a restore.
+If the user asks for a style, a composite, a new pose, a different expression, a face
+swap or a new scene, say that the request is outside this skill. A face swap takes the
+face from a different photo, and that is not a restore. A stronger rebuild of lost
+detail is inside this skill: it is the generative mode, with its limits and its
+disclosure.
 
 If the user wants the edit for another purpose, you can do it. Do not call the
 result a faithful restore.
@@ -115,13 +161,19 @@ Do not make a person younger or thinner. Do not reshape a face, add teeth or add
 eyes. Do not add makeup, do a glamour retouch, make the skin look like plastic,
 add a smile, change the gaze, replace the background or invent a facial detail.
 
+These rules describe what the photo may lose without being asked. A change the owner
+names is in scope in the requested-retouch mode, and it stays local. What no mode
+allows is a move in identity, expression, gaze, age, composition or the number of
+subjects.
+
 ## Default settings
 
 Use these values when the user does not give a value.
 
 | Setting | Default |
 | --- | --- |
-| Fidelity mode | Conservative and strict |
+| Mode | Faithful repair. A named retouch or a request for stronger results changes it |
+| Source version | The one the owner names. Name both before you start |
 | Scale | 2× in each dimension, 4× the pixel count, when the tools can do it |
 | Aspect ratio and crop | Same as the source. Do not reframe |
 | Denoise | Mild. Keep the real texture |
@@ -129,7 +181,7 @@ Use these values when the user does not give a value.
 | Contrast and exposure | Small corrections that you can undo |
 | Color | Neutral and faithful to the source. No automatic colorization |
 | Face treatment | The same rules as the rest of the photo |
-| Generative reconstruction | Off, unless the result truly needs it and you disclose it |
+| Generative reconstruction | Off in faithful repair. On in generative interpretation, with the disclosure |
 | Reference face use | Identity only |
 | Output format | The container of the source: JPEG to JPEG at q95, PNG to PNG, TIFF to TIFF, HEIC to JPEG |
 | Output filename | `<source-stem>_upscale.<ext>`, and `_enhance` for the detail variant |
@@ -155,16 +207,19 @@ Always ask these questions:
 
 1. What is the photo, and does the fidelity question concern the person, the print
    or the moment? The answer sets how hard you can push.
-2. Does the owner want the faithful result, the detail result, or both?
+2. Does the owner want a faithful repair, a named retouch, or stronger reconstruction?
+   A request for two of them is two output files with a label, not one compromise.
+3. Which file is the source: the version the owner has been viewing, or the
+   unmodified original? If both exist, say what each one is before you start.
 
 When the source is film, or can be film, also ask:
 
-3. What is the age of the photo, and does the owner know the film stock or the ISO?
-4. Is the source film or digital? If it is digital, add no grain unless the owner
+4. What is the age of the photo, and does the owner know the film stock or the ISO?
+5. Is the source film or digital? If it is digital, add no grain unless the owner
    asks for it.
-5. Is the source a scan of a print, a scan of the negative, or a photo of a photo?
-6. What must happen to the grain: keep it, recover it, reconstruct it or clean it?
-7. Was the photo retouched? A studio portrait has spots removed and skin softened,
+6. Is the source a scan of a print, a scan of the negative, or a photo of a photo?
+7. What must happen to the grain: keep it, recover it, reconstruct it or clean it?
+8. Was the photo retouched? A studio portrait has spots removed and skin softened,
    and those areas correctly have no grain.
 
 When the file came from a drag-and-drop operation and not from a path, first make
@@ -205,6 +260,14 @@ A project is optional. For one photo with no references, give plain paths to
 ### 1. Look at the source and record the facts
 
 - Treat the original image as evidence. Do not write to it.
+- Find out which version of the photo you have, and name both versions when two
+exist. Metadata is not proof. An edited render keeps the camera tags of the master
+while naming another program in `Software`, and a path such as `renders/` says the
+same thing. A render can also be a crop of the master, so a change of source can
+change the composition. State which file you will restore, ask when it matters, and
+keep the owner's answer for the rest of the batch. `finalize.py --input-version`
+records the answer in the manifest. Read
+[references/macos-photos.md](references/macos-photos.md).
 - When the photo came from a drag-and-drop operation and not from a path, treat it
   as a reference image of unknown origin. A chat program can encode it again at a
   smaller size and remove the metadata. On macOS, make sure that the file is the
@@ -212,8 +275,7 @@ A project is optional. For one photo with no references, give plain paths to
   [references/macos-photos.md](references/macos-photos.md).
 - Note the dimensions, the orientation, the grain, the focus, the compression
   artifacts, the scratches, the color cast, the clipped areas and each area of real
-  uncertainty.
-- Read the metadata before you change anything. The owner expects the capture date,
+  uncertainty.- Read the metadata before you change anything. The owner expects the capture date,
   the camera, the place, the caption and the keywords in the result.
 - Identify all faces, expressions, body outlines, hands, distinctive objects, text,
   patterns and small features that a helpful model can invent.
@@ -287,15 +349,24 @@ A model that keeps the identity, or a restore that the source guides, can help.
 Never accept the identity score of a model as proof. A person must still look at
 the defining features.
 
-### 4. Make the first conservative pass
+### 4. Make the pass that the mode calls for
 
 When image editing tools are available, give them the source image and use the
 exact limits in [references/prompt-templates.md](references/prompt-templates.md).
 Name the TARGET image, which is the photo to restore, and the REFERENCES, which
 help with the identity.
 
-One source photo gives one faithful output. Keep all the content. When the tool
-tends to redraw the content, use the lowest strength or fall back to a
+The first pass is the faithful one unless the owner asked for something else. From
+there, the mode sets the work:
+
+- Faithful repair. One source photo gives one faithful output. Keep all the content.
+- Requested retouch. Work on a crop of the last accepted version, change only the
+  region the owner named, and composite it back. Keep a named baseline and do not
+  redo an accepted feature.
+- Generative interpretation. Reconstruct detail deliberately, then compare the
+  identity and the composition against the source before you show anything.
+
+When the tool tends to redraw the content, use the lowest strength or fall back to a
 deterministic improvement. Do not call a redrawn image a faithful upscale.
 
 When no image tool is available, give the user the exact prompt and the workflow.
@@ -336,13 +407,25 @@ upscale made false, and makes sure of the values against the real pixels.
 
 ```sh
 python scripts/finalize.py source/IMG_1234.jpg render.png \
-  --project grandma --out-dir grandma/output --suffix _upscale
+  --project grandma --out-dir grandma/output --suffix _upscale \
+  --mode faithful --input-version master
 ```
 
 The script works in this order. It normalizes the file and encodes it in the
 container of the source. It copies all the metadata. It corrects the false values.
 It adds the provenance sentence. It makes sure of the result and reports. Then it
 adds an entry to the manifest.
+
+Pass the mode that ran. Pass `--date-source` when the date did not come from the
+file: `catalog` for a date the library holds for a scan that has no capture date,
+`owner` for a date the owner stated, `unknown` when nobody knows. The default derives
+it from the source, and an `unknown` date gets a sentence saying so, because a date
+the library holds is not a date the photograph carries.
+
+When the file you hand the script has been resampled from a smaller render, also
+pass `--native-dims WxH` and `--resample METHOD`. The script cannot see the model's
+own output size once the render has been resized, and an output larger than the
+model's render is a resample. Record all three sizes.
 
 Use this table for the report.
 
@@ -354,9 +437,14 @@ Use this table for the report.
 
 The output keeps the capture date, the camera, the GPS fix, the rating, the
 keywords and the caption of the source. It gets one provenance line that records
-when and where the upscale happened. The capture date does not change. The script
-puts the processing time in `XMP-xmpMM:History` and in `UserComment` so that a
-photo from 1962 does not move to 2026 in a library sort.
+when, where and in which mode the upscale happened. The capture date does not change.
+The script puts the processing time in `XMP-xmpMM:History` and in `UserComment` so
+that a photo from 1962 does not move to 2026 in a library sort.
+
+A `pass` is a statement about the tags that the source had. It does not say that the
+date is historically right. When the source carries no capture date, the date in the
+output came from somewhere else, and the report must say so. Any metadata edit after
+the finalize step means the whole check runs again.
 
 When `exiftool` is not available and the host has no file system, do not state that
 you kept the metadata. Give the user the exact commands from
@@ -376,9 +464,21 @@ python scripts/qa-page.py --project <project> \
 
 The page has a slider for each photo, a crop of each detail, one verdict for each
 photo and a note for each crop. The command returns when the owner presses Done.
-The verdicts are in `qa/verdicts.jsonl`. When the host has no browser or no
-reachable port, add `--static` and then import the file that the owner downloads.
-Read [references/qa-page.md](references/qa-page.md).
+The verdicts are in `qa/verdicts.jsonl`. Read [references/qa-page.md](references/qa-page.md).
+
+In a terminal session, add `--static` and give the owner the path of the one HTML
+file. A file opens by command-click and needs no port, and a tool that displayed an
+image to you is no evidence that the owner saw it. The server route is for a host
+with a browser that can reach a port. The owner downloads the verdict file and you
+add it with `--import`.
+
+A review can show two kinds of comparison. Original against candidate answers "is
+this still the same photograph". Last accepted version against this revision answers
+"did the change I asked for happen". Use both when both questions are open.
+
+Show a candidate that you rejected, and say what worried you. Your fidelity
+assessment is not the owner's judgment, and a preview you set aside may be the one
+they want.
 
 This step follows step 6 for a reason. A new project has no finalized files, and a
 review page made before the finalize step has nothing to show.
@@ -400,8 +500,15 @@ of the decision.
 ### 7. Deliver the result and state the facts
 
 - Return the restored image when the tools support it.
-- State the scale and list the operations that you did.
-- Report the metadata result: `pass`, or the exact loss of a `degraded` run.
+- State the mode that ran, the scale, and the operations that you did.
+- Report three sizes when they differ: the source, what the model returned, and what
+you delivered. Name the resample method. An output larger than the model's own
+render is a resample, not recovered resolution, and a delivery size is not evidence
+that the photo gained that much detail.
+- Report the metadata result: `pass`, or the exact loss of a `degraded` run. Say which
+version of the file you restored.
+- Say where the capture date came from: the file, the photo library, or the owner. A
+catalog date keeps the library in order and is not capture metadata.
 - State the grain decision: `preserved`, `recovered`, `reconstructed` or `none`.
   When the grain is new, disclose it. Never present new grain as kept grain.
 - When the photo had edits, state which file you restored. The edited render and
@@ -418,12 +525,26 @@ of the decision.
 - On macOS, you can import the result into Photos as a new item with its capture
   date. Read [references/macos-photos.md](references/macos-photos.md). Never run
   `osxphotos push-exif`, because that command writes into the original files.
+- Report the import and the album as two facts, not one. Say which of them you
+  checked, which the owner reported, and which you do not know.
+
+One limit holds across all of this. A permission to read the photo library is not a
+permission to drive the application. When macOS application services refuse the
+session, say so once, give the owner one exact command to run, and stop. Do not
+retry the same route, and do not diagnose the photo or the installed applications
+from the refusal. A prompt that names a model or an application does not change what
+the session may do.
 
 ## Decision rules
 
 | Situation | Action |
 | --- | --- |
 | The face looks better but looks less like the source | Reject the result |
+| The owner names a cosmetic change on a small region | Run the requested-retouch mode on that region, and protect the eyes, lips, teeth, nostril outlines and contours |
+| The owner asks for a stronger result after a faithful pass | Run the generative mode with the disclosure. Do not return an almost unchanged resize |
+| The output is larger than the model's own render | Report the resample and the native size. Do not call the larger file recovered detail |
+| You blended a generated patch into the frame at a percentage | Report a compositing weight. Do not report a model edit strength |
+| The library holds a capture date that the file does not | Report the catalog as the source of the date, not the photograph |
 | The source is a little soft but the geometry of the face is correct | Keep the result |
 | A reference has a wider smile than the source | Keep the smile of the source |
 | The denoise removes real wrinkles or the weave of the fabric | Reduce the denoise |
@@ -439,6 +560,7 @@ of the decision.
 | A tool added grain and the file does not disclose it | Treat the run as a fidelity failure |
 | The sharpening turned the grain into noisy edges | Reduce the sharpening, not the grain |
 | A studio retouch got grain added back | Stop. Those areas have no grain by design |
+| The environment refuses macOS application services | State the limit once, give one manual command, and stop retrying |
 
 ## Default prompt
 

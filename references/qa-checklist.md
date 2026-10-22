@@ -3,6 +3,26 @@
 Use this checklist after EVERY pass. Fail any hard check -> reduce the edit,
 mask the affected area, or revert to a deterministic baseline.
 
+## First: which mode ran, and does the checklist match it
+
+The hard checks below describe faithful repair. Two of them change with the mode, and
+applying the wrong version turns a requested edit into a failure.
+
+| Mode | What changes in the checklist |
+| --- | --- |
+| Faithful repair | all checks below, unchanged |
+| Requested retouch | a named region that differs from the source is the result, not a defect. The rest of the frame is still held to every hard check |
+| Generative interpretation | reconstructed detail is expected and is disclosed. Identity, expression, gaze, age and composition are still held to every hard check |
+
+For a requested retouch, the protected set is explicit:
+
+- [ ] Eyes, lips, teeth, nostril outlines and facial contours are unchanged unless
+      the owner named them.
+- [ ] Everything outside the named region is unchanged. Compare against the last
+      accepted version, not only against the source.
+- [ ] A feature the owner already accepted still matches the accepted version. Do not
+      re-solve a face that was signed off in an earlier pass.
+
 ## Hard checks (must pass)
 
 - [ ] Correct subject count and identities. No invented faces/people.
@@ -32,6 +52,13 @@ mask the affected area, or revert to a deterministic baseline.
       hair strands, or background text.
 - [ ] No crushed shadows, clipped highlights, artificial HDR, or extreme saturation.
 - [ ] Reasonable pixel dimension increase (typically 2x width and height).
+- [ ] Coarse model texture, extra pores, crosshatching and invented lines were read as
+      defects, not as recovered detail.
+- [ ] Where the delivered file is larger than the model's own render, the resample is
+      recorded and described as a resample. Output dimensions are not evidence of
+      recovered resolution.
+- [ ] Expression-driven folds, such as forehead lines in an open-mouth portrait, were
+      kept. They are part of the expression, not age damage.
 - [ ] Original file retained. Outputs labeled if multiple variants are generated.
 
 ## Grain checks
@@ -72,8 +99,11 @@ soft checks.
 - [ ] Existing caption is still present as a substring. The provenance sentence
       was appended, not substituted.
 - [ ] No source keyword was dropped.
-- [ ] Provenance records when and where: the sentence in `UserComment`, the
-      structured event in `XMP-xmpMM:History`.
+- [ ] Provenance records when, where, which mode and at which sizes: the sentence in
+      `UserComment`, the structured event in `XMP-xmpMM:History`.
+- [ ] The capture date provenance is stated. A date the library supplied is reported as
+      a catalog date, and a `pass` is not described as proof the date is historically
+      right.
 - [ ] Re-running the finalize step does not stack the provenance sentence twice.
 - [ ] `scripts/finalize.py` reported `pass`. A `fail` means do not deliver and do
       not import into Photos.

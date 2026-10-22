@@ -44,12 +44,34 @@ addition created the next gap. Stripping once is bounded. Enumerating is not.
 | `EXIF:UserComment` | Append the provenance sentence | A source comment is the owner's words too, so it is appended to, not replaced. |
 | `ThumbnailImage`, `PreviewImage` | Cleared | `-all:all -unsafe` can carry the source's embedded thumbnail, which is a pre-restoration image that Finder and some DAMs display instead of the real pixels. Cleared explicitly and verified absent. |
 
-## Provenance: when and where the upscale happened
+## Provenance: when, where and how the upscale happened
 
 One sentence, written to every place a different reader looks:
 
-> Upscaled 2.0x (4000x3000 to 8000x6000) by photo-restore 2.0,
-> conservative mode, on 2026-10-19. Source: IMG_1234.jpg. Capture date unchanged.
+> Upscaled 2.0x (4000x3000 to 8000x6000, delivered from the model's 3620x2715 output
+> resampled by lanczos) by photo-restore 2.2, faithful repair mode, on 2026-10-19.
+> Source: IMG_1234.jpg. Capture date unchanged.
+
+The mode is part of the sentence because the sentence is the only claim about how the
+detail was produced. A generative run appends:
+
+> Detail was reconstructed by a generative model; it is not recovery of detail lost
+> from the source.
+
+### Three sizes, and why all three are recorded
+
+| Fact | Where it comes from | What it answers |
+| --- | --- | --- |
+| Source size | the source file | what the photograph holds |
+| Native size | the model's own output, before any resample | how much detail the model produced |
+| Delivery size | the output file | what the owner receives |
+
+A larger delivery size does not mean more recovered detail. A model that returns
+fewer pixels than the source is common, and resampling that render to 2× is a
+resample. When the delivered file is larger than the native render, name both and the
+method. `finalize.py --native-dims WxH --resample METHOD` records them in the manifest
+and in the sentence. Without `--native-dims` the script cannot know, and the sentence
+must not imply otherwise.
 
 | Location | Reader |
 | --- | --- |
@@ -68,6 +90,29 @@ The "when" is the processing time. It belongs in `xmpMM:History` and
 `UserComment`. It must never go into `DateTimeOriginal` or `CreateDate`,
 because that would silently refile a 1962 photograph as a 2026 one. This is the
 whole reason for writing provenance to a separate field.
+
+### Where the capture date came from
+
+A date in a tag and a date in a library catalog are different facts. A scan of a print
+can have no embedded capture date at all, and Photos still files it under a timestamp.
+Copying that timestamp keeps the library in order, which is what the owner wants, and
+it says nothing about when the photograph was taken.
+
+`finalize.py --date-source` records the provenance, and every value except `embedded`
+adds a sentence to the file:
+
+| Value | Meaning | Sentence added |
+| --- | --- | --- |
+| `embedded` | the source file carries the capture date | none |
+| `catalog` | the photo library supplied the date | the date was copied from the catalog; the source carries none |
+| `owner` | a person stated the date | the date is not embedded capture metadata |
+| `unknown` | nobody established it | the provenance is unknown |
+| `auto` (default) | `embedded` when `DateTimeOriginal` is present, otherwise `unknown` | as derived |
+
+A metadata `pass` reports that the tags the source had are still there. It is not a
+statement that the date is historically right, and it must not be described as one.
+Delete the date, edit any tag after the finalize step, or re-export the file, and the
+whole verification runs again.
 
 ### Idempotency
 
@@ -185,9 +230,9 @@ if [ -n "$EXISTING" ]; then NOTE="$EXISTING $NOTE"; fi
 exiftool -overwrite_original -Orientation#=1 -XMP-tiff:Orientation#=1 \
   -ExifImageWidth="$W" -ExifImageHeight="$H" \
   -ThumbnailImage= -PreviewImage= \
-  -Software="photo-restore 2.0" \
+  -Software="photo-restore 2.2" \
   -UserComment="$NOTE" \
-  "-XMP-xmpMM:History+={Action=saved,SoftwareAgent=photo-restore 2.0,When=$NOW}" \
+  "-XMP-xmpMM:History+={Action=saved,SoftwareAgent=photo-restore 2.2,When=$NOW}" \
   "$DST"
 ```
 

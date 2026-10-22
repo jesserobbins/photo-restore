@@ -21,6 +21,21 @@ These templates are deliberately model-agnostic so they survive a model change.
 Trim clauses a given model ignores rather than assuming every sentence is
 honoured, and re-verify after any model or version change.
 
+## Mode clause
+
+Pick the template that matches the mode, and pass the same mode to
+`finalize.py --mode`. The mode decides the acceptance rule, so a template used
+outside its mode is the wrong test.
+
+| Mode | Template | Acceptance rule |
+| --- | --- | --- |
+| Faithful repair | A, B, C or D | nothing in the frame may change except technical quality |
+| Requested retouch | F, over the last accepted baseline | only the named region may change |
+| Generative interpretation | E | detail may be reconstructed; identity, expression, gaze, age and composition may not change |
+
+Do not soften a template because the owner asked for more. A stronger request is a
+change of template, not a weaker reading of the same one.
+
 ## Grain clause
 
 Append the clause that matches the decision from `references/film-grain.md`.
@@ -89,12 +104,48 @@ Do not refine a small face using speculative details. Do not alter hands,
 proportions, or overlap/occlusion relationships. Restore global image quality
 without re-generating people.
 
-## E. Higher detail (only if user explicitly asks)
+## E. Generative interpretation (only if the owner asks for it)
 
-Increase perceived detail beyond the conservative baseline while continuing
+This is the generative mode. Pass `--mode generative` to `finalize.py`, which adds the
+disclosure to the provenance sentence. Without that disclosure the result would read
+as recovered detail.
+
+Increase perceived detail beyond the faithful baseline while continuing
 to preserve all identity, expression, and geometry invariants. Where higher
 detail would require hallucinating distinct physical features, refrain from
 doing so. Prefer local improvements to global reconstruction. Compare with
 the original and discard any identity-changing candidate. Higher detail is not
 a licence for cleaner texture: sharper does not mean smoother, and grain must
 not be traded for invented micro-detail.
+
+## F. Requested retouch of one region
+
+Use this for a change the owner named: skin smoothing, a small nostril adjustment,
+makeup-style cleanup, flyaway hairs. Work on a crop of the last accepted version,
+then composite the result back into that version. A full-frame pass moves parts of
+the photograph nobody asked about.
+
+Image 1 is the TARGET. It is a crop of the accepted version, and it is the only part
+of the photograph that may change.
+
+Make exactly this change and nothing else: <the owner's request, in their words>.
+
+Hold every other value at the accepted version: the shape and position of the pupils,
+the catchlights, the eyelid openings, the lip line, the teeth, the outline of the
+nostrils, the facial contours, the jawline, the hairline, the apparent age and the
+expression. Do not smooth beyond the named region. Do not redraw a feature. Do not
+move a feature inside the crop. Keep the grain and the texture of the surrounding
+skin as they are.
+
+Then composite this crop back into the accepted frame. Compare the result with the
+accepted version at the same size before you show it. If the model moved a feature
+inside the crop, the alignment is wrong and feathering will not repair it.
+
+## Notes on what the controls will not do
+
+- A prompt cannot set an edit strength the tool does not expose. Do not describe a
+  result as "run at 35% strength" because a blend used 35%.
+- A blend percentage is a compositing weight. Report it as one.
+- When a model refuses the edit or changes a subject, reduce the change, mask it
+  smaller, or use a deterministic resample. Do not iterate until a better-looking
+  frame appears.

@@ -496,6 +496,11 @@ they want.
 This step follows step 6 for a reason. A new project has no finalized files, and a
 review page made before the finalize step has nothing to show.
 
+The page is part of the delivery, not an extra. An agent that hands over a file and
+says the owner's look is still the final check has named the missing step and skipped
+it: build the page and give the path. Waiting to be asked is a delivery with the human
+half of the checklist left out.
+
 ### 6b. Read the review and offer the cleanup
 
 Read `qa/verdicts.jsonl` before you deliver. The last record for a photo wins. The

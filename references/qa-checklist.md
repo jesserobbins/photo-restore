@@ -18,6 +18,9 @@ For a requested retouch, the protected set is explicit:
 
 - [ ] Eyes, lips, teeth, nostril outlines and facial contours are unchanged unless
       the owner named them.
+- [ ] A colour fix on an eye did not become a geometry fix: pupils keep their
+      position, size and catchlight, and the iris keeps its colour. An eye that was
+      already correct came back unchanged.
 - [ ] Everything outside the named region is unchanged. Compare against the last
       accepted version, not only against the source.
 - [ ] A feature the owner already accepted still matches the accepted version. Do not

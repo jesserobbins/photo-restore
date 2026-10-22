@@ -127,6 +127,13 @@ library can think it is the next step.
 
 - The skill has no upscaler, no face model and no weights. It uses the image model
   that the agent has. The rules and the checks make the result a restore.
+- The skill ships no image operation at all, and this is the line that keeps it
+  useful. A skill that bundled a model would need a download, a GPU host and a
+  workflow, and it would then only work where those things are installed. The point
+  of the skill is that it makes whatever editing tool the agent already has behave
+  well. Three real failures asked for a script each — a red-eye fix, an alpha mask,
+  a JPEG 2000 decode — and all three became guidance and checks instead, because
+  the pixels belong to the agent's tool.
 - The skill does not edit metadata. It copies the tags, it corrects the tags that the
   upscale made false, and it adds the provenance.
 - The skill does not manage the library. It does not delete, deduplicate or

@@ -20,6 +20,14 @@ metadata:
 
 # photo-restore: fidelity first
 
+This skill ships no image model and no image operation. The agent's own editing tool
+makes the pixels, and the rules and the checks here make the result a restore. The
+work must be possible with whatever editing tool the agent already has, so the skill
+never asks for a model, a download, a GPU host or a workflow to install.
+
+That is why the helpers are small scripts for naming, metadata and review. None of
+them touches the picture.
+
 ## Preferred image models
 
 An image model does the pixel work. Models behave in different ways on a restore.
@@ -260,6 +268,11 @@ A project is optional. For one photo with no references, give plain paths to
 ### 1. Look at the source and record the facts
 
 - Treat the original image as evidence. Do not write to it.
+- Open the source before you plan. Some formats do not survive the obvious path: a
+  JPEG 2000 scan may need a decoder the host lacks, a scan may carry transparent
+  margins, and a render may carry a profile that no longer describes its pixels. Read
+  [references/difficult-sources.md](references/difficult-sources.md) when the source is
+  not a plain JPEG, PNG or TIFF.
 - Find out which version of the photo you have, and name both versions when two
 exist. Metadata is not proof. An edited render keeps the camera tags of the master
 while naming another program in `Software`, and a path such as `renders/` says the
@@ -560,6 +573,9 @@ the session may do.
 | A tool added grain and the file does not disclose it | Treat the run as a fidelity failure |
 | The sharpening turned the grain into noisy edges | Reduce the sharpening, not the grain |
 | A studio retouch got grain added back | Stop. Those areas have no grain by design |
+| A red eye needs a colour fix | Correct the pupil in a crop of the accepted frame. Keep its size, position, structure and catchlight. Do not recolor the iris or paint a dark disc |
+| A tool cannot decode the source container | Use another decoder the host has, disclose the container change, and never call it preserved |
+| The source carries an alpha channel | It is the scanner margin until the owner says otherwise. Keep it, or make the cutout a stated decision |
 | The environment refuses macOS application services | State the limit once, give one manual command, and stop retrying |
 
 ## Default prompt

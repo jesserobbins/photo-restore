@@ -5,8 +5,10 @@ The skill has four scripts. Two of them do the mechanical work on a photograph:
 makes a project folder. `qa-page.py` builds the review page. `compare.py` makes a
 single comparison sheet.
 
-None of the scripts makes the upscaled pixels. Each script takes the source photo
-and the render that your image model made.
+None of the scripts makes the upscaled pixels, and none of them edits an image. Each
+script takes the source photo and the render that the agent's own image tool made.
+That is deliberate: the skill ships no model, so it works with whatever editing tool
+the agent already has.
 
 ## finalize.py
 
@@ -193,7 +195,8 @@ size of the output. The second part is the restored result. The third part is th
 difference, with the contrast increased.
 
 The sheet helps a reviewer to see a change. It does not prove that the identity
-stayed the same. `--crop` uses the pixel coordinates of the source file.
+stayed the same, and it is the only script that writes an image at all: it writes a
+new comparison sheet and never a deliverable. `--crop` uses the pixel coordinates of the source file.
 
 ## Grain values
 

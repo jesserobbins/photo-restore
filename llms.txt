@@ -14,7 +14,8 @@
 - Version: 2.2.0
 - Install: `npx skills add jesserobbins/photo-restore`
 - Kind: Agent Skill. The folder holds a `SKILL.md` with instructions and four helper
-  scripts.
+  scripts. None of them touches pixels: the agent's own image tool does that, so the
+  skill works with whatever editing tool the agent already has.
 
 ## What it is
 
@@ -82,6 +83,8 @@ the corrections, and it checks the result against the source file.
   the acceptance checks
 - [references/prompt-templates.md](https://github.com/jesserobbins/photo-restore/blob/main/references/prompt-templates.md):
   the prompts
+- [references/difficult-sources.md](https://github.com/jesserobbins/photo-restore/blob/main/references/difficult-sources.md):
+  JPEG 2000, transparent margins and color profiles
 
 ## Short summary
 

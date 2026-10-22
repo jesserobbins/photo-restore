@@ -30,7 +30,7 @@ outside its mode is the wrong test.
 | Mode | Template | Acceptance rule |
 | --- | --- | --- |
 | Faithful repair | A, B, C or D | nothing in the frame may change except technical quality |
-| Requested retouch | F, over the last accepted baseline | only the named region may change |
+| Requested retouch | F, and G for a red eye, over the last accepted baseline | only the named region may change |
 | Generative interpretation | E | detail may be reconstructed; identity, expression, gaze, age and composition may not change |
 
 Do not soften a template because the owner asked for more. A stronger request is a
@@ -140,6 +140,36 @@ skin as they are.
 Then composite this crop back into the accepted frame. Compare the result with the
 accepted version at the same size before you show it. If the model moved a feature
 inside the crop, the alignment is wrong and feathering will not repair it.
+
+## G. Red-eye correction of one eye
+
+Use this in the requested-retouch mode. Red-eye is the case that breaks first,
+because the obvious fixes all destroy the eye: darkening the pupil paints a disc,
+recoloring the iris turns it green or flat, and asking the model for "clean eyes"
+usually redraws the eyelid while it works.
+
+Image 1 is the TARGET. Image 2 is a crop of the same eye in the source, at the size
+the pupil should be.
+
+Remove the red cast from the pupil of the eye in Image 1. Keep the pupil at its exact
+position and diameter, keep its luminance structure, keep the catchlight and its
+shape, and keep the iris untouched. Do not change the eyelid, the lashes, the
+sclera, the tear line or the skin around the eye. Do not add or remove a highlight.
+
+Then check it at 200% against the source eye:
+
+- the pupil is the same size and position
+- the catchlight is still there and still the same shape
+- the iris colour did not move
+- the eyelid and lashes are identical to the accepted version
+
+Reddish, amber and already-correct eyes each fail in a different way. An eye that
+was already correct must come back unchanged, and a correction that alters it is a
+defect even when the result looks cleaner.
+
+When the model will not do this reliably, do not iterate. Borrow the iris and pupil
+from another photograph of the same person at the same angle, or leave the eye and
+disclose it. A painted-looking pupil is worse than a red one.
 
 ## Notes on what the controls will not do
 

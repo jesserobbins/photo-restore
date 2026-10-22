@@ -242,7 +242,7 @@ def main():
         "schema": SCHEMA,
         "name": a.name or previous.get("name") or name,
         "created": previous.get("created") or datetime.now(timezone.utc).isoformat(timespec="seconds"),
-        "tool": "photo-restore 2.0",
+        "tool": "photo-restore 2.2",
         "sources": merge_list(previous.get("sources"), placed_source),
         "masters": merge_list(previous.get("masters"), placed_master),
         "references": {

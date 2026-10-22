@@ -41,7 +41,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
 
-VERSION = "2.1"
+VERSION = "2.2"
 
 # A review page for a 460 MP archival upscale is the intended use, not a
 # decompression bomb. Pillow would refuse it at ~179 MP.

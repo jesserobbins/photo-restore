@@ -41,7 +41,7 @@ from PIL import Image as _PILImage
 # so the guard is off. Failures still surface as decode errors.
 _PILImage.MAX_IMAGE_PIXELS = None
 
-VERSION = "2.0"
+VERSION = "2.2"
 TOOL = "photo-restore"
 PROG = f"{TOOL} {VERSION}"
 
@@ -59,6 +59,40 @@ CORE_TAGS = (
 GRAIN_DISCLOSURE = (
     "Film grain reconstructed to match the stock; not recovered from source evidence."
 )
+
+# A mode is a claim about where the detail came from, so two of the three modes owe
+# the reader a sentence. Faithful repair claims nothing beyond the source and needs
+# no disclosure; the other two do.
+MODE_WORDS = {
+    "faithful": "faithful repair mode",
+    "retouch": "requested retouch mode",
+    "generative": "generative interpretation mode",
+}
+
+GENERATIVE_DISCLOSURE = (
+    "Detail was reconstructed by a generative model; it is not recovery of detail "
+    "lost from the source."
+)
+
+# A date in a library is not always a date in the file. The catalog holds a
+# timestamp for a scan that has no embedded capture date, and copying it across is
+# correct for library order and wrong as a statement about the photograph.
+DATE_DISCLOSURES = {
+    "embedded": None,
+    "catalog": (
+        "The capture date was copied from the photo library catalog; the source "
+        "carries no embedded capture date."
+    ),
+    "owner": (
+        "The capture date was supplied by the owner; it is not embedded capture "
+        "metadata."
+    ),
+    "unknown": (
+        "The capture date provenance is unknown; it is not embedded capture metadata."
+    ),
+}
+
+RESAMPLE_METHODS = ("none", "lanczos", "bicubic", "bilinear", "nearest", "other")
 
 HEIF_SUFFIXES = {".heic", ".heif", ".hif", ".avif"}
 FORMAT_EXT = {"jpeg": ".jpg", "png": ".png", "tiff": ".tif"}
@@ -290,18 +324,44 @@ def read_state_pillow(path):
     return state
 
 
-def provenance_note(scale, src_name, src_dims, out_dims, when, note, grain=None):
+def dims_clause(src_dims, out_dims, native_dims=None, resample=None):
+    """Source, delivery, and -- when they differ -- the size the model returned.
+
+    An output larger than the model's own render is a resample. Saying only
+    "2439x3564 to 4878x7128" in that case reads as doubled optical detail, which is
+    the claim this clause exists to prevent.
+    """
+    clause = f"{src_dims[0]}x{src_dims[1]} to {out_dims[0]}x{out_dims[1]}"
+    if native_dims and tuple(native_dims) != tuple(out_dims):
+        method = f" by {resample}" if resample and resample != "none" else ""
+        clause += (
+            f", delivered from the model's {native_dims[0]}x{native_dims[1]} output"
+            f" resampled{method}"
+        )
+    return clause
+
+
+def provenance_note(scale, src_name, src_dims, out_dims, when, note, grain=None,
+                    mode="faithful", native_dims=None, resample=None,
+                    date_source="embedded"):
     if note:
         base = note
     else:
         base = (
-            f"Upscaled {scale:.1f}x ({src_dims[0]}x{src_dims[1]} to "
-            f"{out_dims[0]}x{out_dims[1]}) by {PROG}, conservative mode, "
+            f"Upscaled {scale:.1f}x "
+            f"({dims_clause(src_dims, out_dims, native_dims, resample)}) by {PROG}, "
+            f"{MODE_WORDS.get(mode, MODE_WORDS['faithful'])}, "
             f"on {when}. Source: {src_name}. Capture date unchanged."
         )
-    # A reconstructed texture is not preservation, and the file itself must say so.
-    # Matched on the whole sentence, so a note that merely contains the word
-    # "grain" cannot stand in for the disclosure.
+    # Each of these is a claim the reader would otherwise make for us: that a
+    # reconstructed texture is preserved, that generated detail was recovered, that
+    # a catalog date is capture metadata. Matched on the whole sentence, so a note
+    # that merely contains the word "grain" or "catalog" cannot stand in for it.
+    if mode == "generative" and GENERATIVE_DISCLOSURE not in base:
+        base = f"{base} {GENERATIVE_DISCLOSURE}"
+    date_disclosure = DATE_DISCLOSURES.get(date_source)
+    if date_disclosure and date_disclosure not in base:
+        base = f"{base} {date_disclosure}"
     if grain == "reconstructed" and GRAIN_DISCLOSURE not in base:
         base = f"{base} {GRAIN_DISCLOSURE}"
     return base
@@ -826,7 +886,8 @@ def correct_metadata(dest, out_size, note, keywords, appearance=True):
 
 
 def verify(source, dest, source_state, out_size, note, use_exiftool,
-           grain="unknown", target_format=None):
+           grain="unknown", target_format=None, mode="faithful",
+           date_source="embedded"):
     """Compare output against source and against reality. Returns (status, report)."""
     problems, shortfalls = [], []
     out = read_state(dest) if use_exiftool else read_state_pillow(dest)
@@ -934,6 +995,20 @@ def verify(source, dest, source_state, out_size, note, use_exiftool,
                 "grain was reconstructed but the output does not disclose it; "
                 "a reconstruction must never read as preservation"
             )
+        # Same standard as the grain: a mode or a date that goes beyond the source
+        # must be readable in the file, not only in this run's report.
+        comment_now = out.get("UserComment") or ""
+        if mode == "generative" and GENERATIVE_DISCLOSURE not in comment_now:
+            problems.append(
+                "the run used the generative mode but the output does not disclose "
+                "reconstructed detail; it would read as recovered detail"
+            )
+        date_disclosure = DATE_DISCLOSURES.get(date_source)
+        if date_disclosure and date_disclosure not in comment_now:
+            problems.append(
+                f"the capture date provenance is {date_source!r} but the output does "
+                "not say so; a catalog date would read as embedded capture metadata"
+            )
 
         # Existing captions must survive, because they are the owner's words.
         src_caption = source_state.get("Caption-Abstract")
@@ -1022,10 +1097,38 @@ def build_parser():
                    help="Film-grain decision, recorded in the manifest; "
                         "'reconstructed' is disclosed in the provenance sentence")
     p.add_argument("--master-name", help="Filename of the unedited master, recorded in the manifest")
+    p.add_argument("--mode", default="faithful", choices=tuple(MODE_WORDS),
+                   help="Restoration mode: faithful repair (default), the owner's requested "
+                        "retouch, or a generative interpretation. The mode is recorded in the "
+                        "manifest, and the generative mode is disclosed in the provenance")
+    p.add_argument("--input-version", default="unknown",
+                   choices=("render", "master", "unknown"),
+                   help="Which version of the photo the source file is: an edited render, "
+                        "the unedited master, or not established")
+    p.add_argument("--native-dims", metavar="WxH",
+                   help="Pixel size the image model returned before any resample. Recorded "
+                        "beside the delivery size, and disclosed when the two differ")
+    p.add_argument("--resample", default=None, choices=RESAMPLE_METHODS,
+                   help="Method used to reach the delivery size from --native-dims")
+    p.add_argument("--date-source", default="auto",
+                   choices=("auto",) + tuple(DATE_DISCLOSURES),
+                   help="Provenance of the capture date: auto (embedded when the source has "
+                        "DateTimeOriginal, otherwise unknown), embedded, catalog, owner, unknown")
     p.add_argument("--force", action="store_true", help="Overwrite an existing output file")
     p.add_argument("--dry-run", action="store_true", help="Report the plan and exit")
     p.add_argument("--json", action="store_true", help="Emit the result as JSON")
     return p
+
+
+def parse_dims(text, flag):
+    """Read a WxH argument. A malformed size is a usage error, not a guess."""
+    m = re.fullmatch(r"\s*(\d+)\s*[xX×]\s*(\d+)\s*", text or "")
+    if not m:
+        die(f"{flag} must be WIDTHxHEIGHT, for example 1086x1448; got {text!r}")
+    w, h = int(m.group(1)), int(m.group(2))
+    if w <= 0 or h <= 0:
+        die(f"{flag} needs positive dimensions; got {text!r}")
+    return (w, h)
 
 
 def main():
@@ -1080,6 +1183,39 @@ def main():
             f"Anisotropic scale: {scale:.3f}x horizontally but "
             f"{render_display[1] / src_display[1]:.3f}x vertically."
         )
+
+    # Native dimensions are a claim about the same picture, so they must keep the
+    # source's shape. A different aspect ratio means the wrong file was named.
+    native_dims = parse_dims(a.native_dims, "--native-dims") if a.native_dims else None
+    if native_dims:
+        if abs(native_dims[0] / native_dims[1]
+               - src_display[0] / src_display[1]) > 0.005:
+            die(
+                f"--native-dims {native_dims[0]}x{native_dims[1]} does not match the "
+                f"source aspect ratio ({src_display[0]}x{src_display[1]}). That is a "
+                "claim about a different picture."
+            )
+        if tuple(native_dims) == tuple(render_display) and a.resample not in (None, "none"):
+            die(
+                f"--resample {a.resample} describes a resample that did not happen: "
+                f"the render is already the model's {native_dims[0]}x{native_dims[1]} output."
+            )
+    elif a.resample not in (None, "none"):
+        die(
+            f"--resample {a.resample} needs --native-dims: without the model's own output "
+            "size there is nothing to describe as resampled."
+        )
+    resample = None
+    if native_dims and tuple(native_dims) != tuple(render_display):
+        resample = a.resample or "other"
+    else:
+        resample = "none"
+
+    # A capture date that no tag carries did not come from the file. Derive that,
+    # and let the caller override it when the date came from a catalog or a person.
+    date_source = a.date_source
+    if date_source == "auto":
+        date_source = "embedded" if src_state.get("DateTimeOriginal") else "unknown"
     if scale < 1.0:
         print(
             f"warning: the render is {scale:.3f}x, which is smaller than the source. "
@@ -1090,7 +1226,9 @@ def main():
 
     when = datetime.now().astimezone().strftime("%Y-%m-%d")
     note = provenance_note(scale, a.source.name, src_display, render_display,
-                           when, a.note, a.grain)
+                           when, a.note, a.grain, mode=a.mode,
+                           native_dims=native_dims, resample=resample,
+                           date_source=date_source)
     keywords = [] if a.no_keywords else merge_keywords(["upscaled", TOOL], a.keyword or [])
 
     out_dir = a.out_dir or (a.project / "output" if a.project else a.source.parent)
@@ -1118,6 +1256,11 @@ def main():
         "scale": round(scale, 3),
         "suffix": a.suffix,
         "grain": a.grain,
+        "mode": a.mode,
+        "native_size": list(native_dims) if native_dims else None,
+        "resample": resample,
+        "date_source": date_source,
+        "input_version": a.input_version,
         "note": note,
         "keywords": keywords,
         "exiftool": use_exiftool,
@@ -1195,7 +1338,8 @@ def main():
             copy_warn = "\n".join(w for w in (copy_warn, correct_warn) if w)
 
         status, report = verify(a.source, out_path, src_state, render_display, note,
-                                use_exiftool, a.grain, target_format)
+                                use_exiftool, a.grain, target_format,
+                                mode=a.mode, date_source=date_source)
         report["shortfalls"].extend(embed_notes)
         if icc_warning:
             report["shortfalls"].append(icc_warning)
@@ -1241,6 +1385,7 @@ def main():
                 "metadata:copied" if use_exiftool else "metadata:degraded",
                 f"provenance:{'written' if use_exiftool else 'not-written'}",
                 f"grain:{a.grain}",
+                f"mode:{a.mode}",
             ],
             "keywords": keywords,
             "appearance_tags_touched": not a.no_appearance_tags,
@@ -1253,6 +1398,29 @@ def main():
                 )
             ),
             "master_filename": a.master_name,
+            # Three separate facts, because "the output is 4878 wide" answers a
+            # different question than "the model produced 2439-wide detail".
+            "mode": a.mode,
+            "input_version": a.input_version,
+            "native_size": list(native_dims) if native_dims else None,
+            "delivery_size": list(render_display),
+            "resample": resample,
+            "resampled": bool(native_dims and tuple(native_dims) != tuple(render_display)),
+            "date_source": date_source,
+            # Computed from the file, like grain_disclosed: a degraded run writes no
+            # provenance and must not report a disclosure it never made.
+            "mode_disclosed": (
+                None if a.mode != "generative" else
+                bool(use_exiftool and GENERATIVE_DISCLOSURE in (
+                    exiftool_read(out_path, ["UserComment"]).get("UserComment") or ""
+                ))
+            ),
+            "date_disclosed": (
+                None if not DATE_DISCLOSURES.get(date_source) else
+                bool(use_exiftool and DATE_DISCLOSURES[date_source] in (
+                    exiftool_read(out_path, ["UserComment"]).get("UserComment") or ""
+                ))
+            ),
             "verification": status,
             "verification_detail": report,
             "finalized_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
@@ -1272,10 +1440,12 @@ def main():
             print(json.dumps(entry, indent=2, default=str))
         else:
             print(f"output: {out_path}")
-            print(f"scale:  {scale:.3f}x  ({src_display[0]}x{src_display[1]} -> "
-                  f"{render_display[0]}x{render_display[1]})")
+            print(f"mode:   {a.mode}  (source version: {a.input_version})")
+            print(f"scale:  {scale:.3f}x  "
+                  f"({dims_clause(src_display, render_display, native_dims, resample)})")
             print(f"format: {target_format} ({encode_note})")
             print(f"grain:  {a.grain}")
+            print(f"date:   capture date provenance: {date_source}")
             print(f"verify: {status.upper()}")
             for p in report["problems"]:
                 print(f"  FAIL: {p}")

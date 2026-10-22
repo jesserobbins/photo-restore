@@ -58,6 +58,11 @@ because the run names the loss. Report the loss to the user.
 | `--no-appearance-tags` | off | leaves the captions exactly as copied |
 | `--no-keywords` | off | adds no keywords |
 | `--grain VALUE` | `unknown` | records the grain decision in the manifest |
+| `--mode VALUE` | `faithful` | records the restoration mode. `generative` adds a disclosure to the provenance sentence |
+| `--input-version VALUE` | `unknown` | records which version of the photo the source is: `render`, `master` or `unknown` |
+| `--native-dims WxH` | none | records the size the image model returned before any resample |
+| `--resample METHOD` | none | records the method that reached the delivery size from `--native-dims` |
+| `--date-source VALUE` | `auto` | records where the capture date came from. `auto` reads the source |
 | `--master-name STR` | none | records the name of the unedited master |
 | `--force` | off | replaces an existing output file |
 | `--dry-run` | off | prints the plan and writes nothing |
@@ -79,6 +84,8 @@ The script compares the output against the source file and against its own pixel
 - The output format is the format that you asked for. The script reads the file
   content, not the file name.
 - The provenance sentence is present, and the history entry is present.
+- The generative disclosure is present when the generative mode ran.
+- The date-provenance sentence is present when the date did not come from the file.
 - The source caption is still in the output, and no source keyword is missing.
 - No thumbnail from the source is in the output.
 - The script reports a disagreement between the EXIF date and the XMP date.
@@ -99,6 +106,16 @@ python scripts/finalize.py IMG_1234.jpg render.png --suffix _enhance
 
 # grain was added on request, and the file says so
 python scripts/finalize.py IMG_1234.jpg render.png --grain reconstructed
+
+# the owner asked for stronger reconstruction, and the file says so
+python scripts/finalize.py IMG_1234.jpg render.png --mode generative
+
+# the model returned fewer pixels, and the file went to 2x anyway
+python scripts/finalize.py scan.jpg model-output.png \
+  --native-dims 1086x1448 --resample lanczos
+
+# a scanned print with no capture date, filed by its library date
+python scripts/finalize.py scan.jpg render.png --date-source catalog
 
 # read the plan and write nothing
 python scripts/finalize.py IMG_1234.jpg render.png --dry-run --json
@@ -192,3 +209,31 @@ stayed the same. `--crop` uses the pixel coordinates of the source file.
 
 When the value is `reconstructed`, the script adds the disclosure to the provenance
 sentence. A reconstruction therefore cannot leave the script as preservation.
+
+## Mode values
+
+`--mode` records which request the pass answered. Each mode has its own acceptance
+rule in `references/qa-checklist.md`.
+
+| Value | Meaning | Disclosure |
+| --- | --- | --- |
+| `faithful` | technical repair only, no cosmetic change. This is the default | none |
+| `retouch` | the regions the owner named, changed locally | none |
+| `generative` | reconstructed detail, with identity and composition unchanged | the file says the detail was reconstructed |
+
+## Date-source values
+
+A date in a tag and a date in a library catalog are different facts. `--date-source`
+records which one the output carries. Every value except `embedded` adds a sentence to
+the file.
+
+| Value | Meaning |
+| --- | --- |
+| `auto` | `embedded` when the source has `DateTimeOriginal`, otherwise `unknown`. This is the default |
+| `embedded` | the source file carries the capture date |
+| `catalog` | the photo library supplied the date, and the source carries none |
+| `owner` | a person stated the date |
+| `unknown` | nobody established it |
+
+A metadata `pass` reports that the source's tags survived. It does not say the date is
+historically right.

@@ -1061,3 +1061,193 @@ def test_tiff_xmp_does_not_survive_the_pillow_only_path(tmp_path):
         ["exiftool", "-q", "-s3", "-XMP-exif:ExifImageWidth", entry["output"]],
         capture_output=True, text=True).stdout.strip()
     assert width in ("", "120"), f"stale XMP dimension survived: {width!r}"
+
+
+# --------------------------------------------------------------------------- #
+# mode, delivery size and date provenance
+# --------------------------------------------------------------------------- #
+
+def test_default_note_does_not_claim_a_recovered_detail_route():
+    note = _note()
+    assert "faithful repair mode" in note
+    assert finalize.GENERATIVE_DISCLOSURE not in note
+    assert "conservative" not in note
+
+
+@pytest.mark.parametrize("mode", ["faithful", "retouch", "generative"])
+def test_note_names_the_mode_that_ran(mode):
+    assert finalize.MODE_WORDS[mode] in _note(mode=mode)
+
+
+def test_generative_mode_discloses_reconstructed_detail():
+    assert finalize.GENERATIVE_DISCLOSURE in _note(mode="generative")
+
+
+def test_custom_note_cannot_defeat_the_generative_disclosure():
+    note = _note(note="Enhanced and upscaled 2x", mode="generative")
+    assert finalize.GENERATIVE_DISCLOSURE in note
+    assert note.startswith("Enhanced and upscaled 2x")
+
+
+def test_requested_retouch_needs_no_disclosure():
+    """A named cosmetic edit is what the owner asked for, not a hidden claim."""
+    note = _note(mode="retouch")
+    assert finalize.GENERATIVE_DISCLOSURE not in note
+
+
+def test_model_native_size_is_named_when_it_differs_from_delivery():
+    note = _note(native_dims=(543, 407), resample="lanczos")
+    assert "543x407" in note
+    assert "lanczos" in note
+    assert "800x600" in note
+
+
+def test_native_size_equal_to_delivery_adds_nothing():
+    assert finalize.dims_clause((400, 300), (800, 600), (800, 600), "none") == \
+        "400x300 to 800x600"
+
+
+def test_upscale_note_without_native_size_still_states_both_ends():
+    assert finalize.dims_clause((400, 300), (800, 600)) == "400x300 to 800x600"
+
+
+@pytest.mark.parametrize("source,text", [
+    ("embedded", None),
+    ("catalog", "photo library catalog"),
+    ("owner", "supplied by the owner"),
+    ("unknown", "provenance is unknown"),
+])
+def test_date_provenance_is_disclosed_unless_embedded(source, text):
+    note = _note(date_source=source)
+    if text is None:
+        assert "catalog" not in note and "provenance is unknown" not in note
+    else:
+        assert text in note
+
+
+@pytest.mark.parametrize("text,expected", [
+    ("1086x1448", (1086, 1448)),
+    ("1086X1448", (1086, 1448)),
+    (" 1086 x 1448 ", (1086, 1448)),
+])
+def test_parse_dims_accepts_the_common_forms(text, expected):
+    assert finalize.parse_dims(text, "--native-dims") == expected
+
+
+@pytest.mark.parametrize("text", ["", "1086", "1086x", "axb", "0x100", "-5x10"])
+def test_parse_dims_refuses_a_malformed_size(text):
+    with pytest.raises(SystemExit) as exc:
+        finalize.parse_dims(text, "--native-dims")
+    assert exc.value.code == 2
+
+
+@pytestmark_needs_pillow
+def test_resample_without_native_dims_is_a_usage_error(tmp_path):
+    """Without the model's own size there is nothing to describe as resampled."""
+    src = make_jpeg(tmp_path / "s.jpg")
+    render = make_jpeg(tmp_path / "r.jpg", size=(120, 90), tags=False)
+    r = run_cli(src, render, "--resample", "lanczos", "--force")
+    assert r.returncode == 2
+    assert "native-dims" in r.stderr
+
+
+@pytestmark_needs_pillow
+def test_resample_at_native_size_is_refused_rather_than_ignored(tmp_path):
+    src = make_jpeg(tmp_path / "s.jpg", size=(60, 45))
+    render = make_jpeg(tmp_path / "r.jpg", size=(120, 90), tags=False)
+    r = run_cli(src, render, "--native-dims", "120x90", "--resample", "lanczos", "--force")
+    assert r.returncode == 2
+    assert "did not happen" in r.stderr
+
+
+@pytestmark_needs_pillow
+def test_native_dims_from_a_different_shape_are_refused(tmp_path):
+    src = make_jpeg(tmp_path / "s.jpg", size=(60, 45))
+    render = make_jpeg(tmp_path / "r.jpg", size=(120, 90), tags=False)
+    r = run_cli(src, render, "--native-dims", "100x100", "--force")
+    assert r.returncode == 2
+    assert "different picture" in r.stderr
+
+
+@pytestmark_needs_pillow
+def test_resampled_delivery_records_three_sizes_and_does_not_claim_detail(tmp_path):
+    project = tmp_path / "proj"
+    (project / "output").mkdir(parents=True)
+    src = make_jpeg(project / "s.jpg", size=(60, 45))
+    render = make_jpeg(tmp_path / "r.jpg", size=(120, 90), tags=False)
+    r = run_cli(src, render, "--project", project,
+                "--native-dims", "80x60", "--resample", "lanczos")
+    assert r.returncode == 0, r.stderr + r.stdout
+    entry = json.loads((project / "manifest.json").read_text())["assets"][-1]
+    assert entry["source_size"] == [60, 45]
+    assert entry["native_size"] == [80, 60]
+    assert entry["delivery_size"] == [120, 90]
+    assert entry["resample"] == "lanczos"
+    assert entry["resampled"] is True
+    assert entry["mode"] == "faithful"
+    comment = finalize.exiftool_read(
+        Path(entry["output"]), ["UserComment"])["UserComment"]
+    assert "80x60" in comment and "lanczos" in comment
+
+
+@pytestmark_needs_pillow
+def test_generative_mode_is_written_into_the_file_and_verified(tmp_path):
+    project = tmp_path / "proj"
+    (project / "output").mkdir(parents=True)
+    src = make_jpeg(project / "s.jpg")
+    render = make_jpeg(tmp_path / "r.jpg", size=(120, 90), tags=False)
+    r = run_cli(src, render, "--project", project, "--mode", "generative")
+    assert r.returncode == 0, r.stderr + r.stdout
+    entry = json.loads((project / "manifest.json").read_text())["assets"][-1]
+    assert entry["mode"] == "generative"
+    assert entry["mode_disclosed"] is True
+    comment = finalize.exiftool_read(
+        Path(entry["output"]), ["UserComment"])["UserComment"]
+    assert finalize.GENERATIVE_DISCLOSURE in comment
+
+
+@pytestmark_needs_pillow
+def test_a_catalog_date_is_reported_as_catalog_not_as_capture_metadata(tmp_path):
+    """A scan with no embedded date still carries the date it was filed under."""
+    project = tmp_path / "proj"
+    (project / "output").mkdir(parents=True)
+    src = make_jpeg(project / "scan.jpg")   # stamped 1962 by make_jpeg
+    subprocess.run(["exiftool", "-q", "-overwrite_original",
+                    "-DateTimeOriginal=", "-CreateDate=", str(src)],
+                   check=True, capture_output=True)
+    subprocess.run(["exiftool", "-q", "-overwrite_original",
+                    "-CreateDate=2001:01:11 02:43:00", str(src)],
+                   check=True, capture_output=True)
+    render = make_jpeg(tmp_path / "r.jpg", size=(120, 90), tags=False)
+
+    auto = run_cli(src, render, "--project", project, "--json")
+    assert auto.returncode == 0, auto.stderr
+    entry = json.loads(auto.stdout)
+    assert entry["date_source"] == "unknown", (
+        "a CreateDate-only source has no capture date, so the default must not "
+        "describe the date as embedded capture metadata"
+    )
+    assert entry["date_disclosed"] is True
+
+    declared = run_cli(src, render, "--project", project, "--json",
+                       "--date-source", "catalog", "--suffix", "_catalog")
+    assert declared.returncode == 0, declared.stderr
+    entry = json.loads(declared.stdout)
+    assert entry["date_source"] == "catalog"
+    comment = finalize.exiftool_read(
+        Path(entry["output"]), ["UserComment"])["UserComment"]
+    assert "photo library catalog" in comment
+
+
+@pytestmark_needs_pillow
+def test_input_version_is_recorded_so_a_render_is_not_called_a_master(tmp_path):
+    project = tmp_path / "proj"
+    (project / "output").mkdir(parents=True)
+    src = make_jpeg(project / "s.jpg")
+    render = make_jpeg(tmp_path / "r.jpg", size=(120, 90), tags=False)
+    r = run_cli(src, render, "--project", project, "--input-version", "render",
+                "--master-name", "s_master.jpg")
+    assert r.returncode == 0, r.stderr + r.stdout
+    entry = json.loads((project / "manifest.json").read_text())["assets"][-1]
+    assert entry["input_version"] == "render"
+    assert entry["master_filename"] == "s_master.jpg"

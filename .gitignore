@@ -7,3 +7,4 @@ __pycache__/
 .roborev/
 .tools/
 .kata.local.toml
+.worktrees/
